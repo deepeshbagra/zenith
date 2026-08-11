@@ -39,8 +39,10 @@ function resolveConnection() {
     return { url: "http://localhost:8000", path: "/socket.io" };
   }
 
-  // Same-origin function.
-  return { url: window.location.origin, path: "/api/socket-io/socket.io" };
+  // Same-origin function. The path sits outside /api because Vercel will not
+  // route a two-segment path to a function, and Socket.IO always appends a
+  // trailing slash — see the routing note in api/socket-io/[...path].js.
+  return { url: window.location.origin, path: "/rtc" };
 }
 
 export const SocketProvider = ({ children }) => {

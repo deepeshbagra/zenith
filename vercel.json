@@ -9,7 +9,19 @@
   },
   "rewrites": [
     {
-      "source": "/((?!api/).*)",
+      "source": "/rtc/",
+      "destination": "/api/socket-io/conn"
+    },
+    {
+      "source": "/rtc/:path*",
+      "destination": "/api/socket-io/conn"
+    },
+    {
+      "source": "/rtc",
+      "destination": "/api/socket-io/conn"
+    },
+    {
+      "source": "/((?!api/|rtc).*)",
       "destination": "/index.html"
     }
   ],
