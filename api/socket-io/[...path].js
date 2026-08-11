@@ -22,12 +22,19 @@
  * appends its own "/socket.io" suffix to the function's route — and must use the
  * websocket transport, since Socket.IO's default HTTP long-polling does not work
  * here.
+ *
+ * This file is a catch-all ([...path]) on purpose. Vercel routes only the exact
+ * path of a function file, so a plain api/socket-io.js received requests for
+ * "/api/socket-io" but returned NOT_FOUND for "/api/socket-io/socket.io/…" —
+ * which is every request Socket.IO actually makes. The catch-all claims the
+ * whole subtree, and req.url keeps the original path so Socket.IO's own path
+ * matching still works.
  */
 
 const http = require("http");
 const { Server } = require("socket.io");
-const { registerHandlers } = require("../lib/signaling");
-const { attachRedisAdapter } = require("../lib/adapter");
+const { registerHandlers } = require("../../lib/signaling");
+const { attachRedisAdapter } = require("../../lib/adapter");
 
 const server = http.createServer();
 

@@ -3,7 +3,7 @@
   "buildCommand": "npm run build",
   "outputDirectory": "client/build",
   "functions": {
-    "api/socket-io.js": {
+    "api/socket-io/[...path].js": {
       "maxDuration": 300
     }
   },
