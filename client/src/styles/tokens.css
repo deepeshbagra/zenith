@@ -1,9 +1,20 @@
-@import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=SF+Pro+Display:wght@400;500;600;700&display=swap");
+@import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap");
+
+/*
+ * Design tokens.
+ *
+ * Near-monochrome by design: greys carry the entire interface and the single
+ * blue accent is reserved for primary actions and the active-speaker highlight.
+ * Red now means one thing only — destructive or "you are muted" — so it reads as
+ * a warning instead of decoration.
+ *
+ * Every colour used anywhere in the app should come from a variable here.
+ */
 
 :root {
   /* Base font size for rem calculations - responsive */
   font-size: clamp(14px, 1.5vw, 16px);
-  
+
   /* Responsive breakpoints for media queries */
   --breakpoint-xs: 480px;
   --breakpoint-sm: 640px;
@@ -11,7 +22,7 @@
   --breakpoint-lg: 1024px;
   --breakpoint-xl: 1280px;
   --breakpoint-2xl: 1536px;
-  
+
   /* Responsive font sizes */
   --font-xs: clamp(0.7rem, 0.65rem + 0.25vw, 0.875rem);
   --font-sm: clamp(0.8rem, 0.75rem + 0.25vw, 1rem);
@@ -20,7 +31,7 @@
   --font-xl: clamp(1.4rem, 1.2rem + 1vw, 2rem);
   --font-2xl: clamp(1.6rem, 1.4rem + 1vw, 2.5rem);
   --font-3xl: clamp(1.8rem, 1.6rem + 1vw, 3rem);
-  
+
   /* Responsive spacing */
   --spacing-xs: clamp(0.25rem, 0.2rem + 0.25vw, 0.5rem);
   --spacing-sm: clamp(0.5rem, 0.4rem + 0.5vw, 1rem);
@@ -29,178 +40,243 @@
   --spacing-xl: clamp(1.5rem, 1.2rem + 1.5vw, 2.5rem);
   --spacing-2xl: clamp(2rem, 1.5rem + 2.5vw, 3.5rem);
   --spacing-3xl: clamp(2.5rem, 2rem + 2.5vw, 4rem);
-  
-  /* Responsive container max-widths */
+
+  /* Container max-widths */
   --container-xs: 100%;
   --container-sm: 640px;
   --container-md: 768px;
   --container-lg: 1024px;
   --container-xl: 1280px;
   --container-2xl: 1400px;
-  
-  /* Radius (Apple-style rounded corners) - responsive */
-  --radius-xs: clamp(4px, 0.3rem, 6px);
-  --radius-sm: clamp(8px, 0.5rem + 0.25vw, 12px);
-  --radius-md: clamp(12px, 0.75rem + 0.5vw, 18px);
-  --radius-lg: clamp(16px, 1rem + 0.5vw, 24px);
-  --radius-xl: clamp(20px, 1.25rem + 0.5vw, 28px);
+
+  /* Radius - tighter than before; large radii read as toy-like at this scale */
+  --radius-xs: 4px;
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 16px;
+  --radius-xl: 20px;
   --radius-full: 9999px;
-  
-  /* Responsive icon sizes */
+
+  /* Icon sizes */
   --icon-xs: clamp(12px, 0.75rem, 14px);
   --icon-sm: clamp(16px, 1rem, 18px);
   --icon-md: clamp(20px, 1.25rem, 24px);
   --icon-lg: clamp(24px, 1.5rem, 28px);
   --icon-xl: clamp(32px, 2rem, 40px);
-  
+
   /* Transitions */
   --transition-fast: 150ms cubic-bezier(0.4, 0, 0.2, 1);
-  --transition-base: 300ms cubic-bezier(0.4, 0, 0.2, 1);
-  --transition-slow: 500ms cubic-bezier(0.4, 0, 0.2, 1);
+  --transition-base: 250ms cubic-bezier(0.4, 0, 0.2, 1);
+  --transition-slow: 400ms cubic-bezier(0.4, 0, 0.2, 1);
   --transition-bounce: 400ms cubic-bezier(0.68, -0.55, 0.265, 1.55);
+
+  /* Semantic colours, identical in both themes so meaning never shifts */
+  --danger: #e5484d;
+  --danger-hover: #cc3a3f;
+  --danger-soft: rgba(229, 72, 77, 0.14);
+  --success: #30a46c;
+  --success-soft: rgba(48, 164, 108, 0.14);
+  --warning: #e0a422;
+  --warning-soft: rgba(224, 164, 34, 0.14);
 }
 
-/* Dark Theme (Default) */
+/* ------------------------------------------------------------------ dark -- */
 :root[data-theme="dark"],
 :root:not([data-theme]) {
-  /* Brand Colors (Reds) */
-  --brand-deep: #5E0006;
-  --brand-main: #9B0F06;
-  --brand-accent: #D53E0F;
-  --brand-soft: #EED9B9;
+  --background: #0a0a0b;
+  --background-soft: #101113;
+  --background-gradient: radial-gradient(
+      circle at 15% 0%,
+      rgba(59, 130, 246, 0.06) 0%,
+      transparent 45%
+    ),
+    linear-gradient(180deg, #0d0e10 0%, #0a0a0b 100%);
 
-  /* Backgrounds */
-  --background: var(--brand-deep);
-  --background-soft: #2b0203;
-  --background-gradient: radial-gradient(circle at 20% 40%, rgba(155, 15, 6, 0.6) 0%, transparent 55%),
-    radial-gradient(circle at 80% 75%, rgba(213, 62, 15, 0.45) 0%, transparent 55%),
-    linear-gradient(180deg, #2b0203 0%, #000000 100%);
-  
-  /* Glassmorphism Variables */
-  --glass-bg: rgba(255, 255, 255, 0.06);
-  --glass-bg-strong: rgba(255, 255, 255, 0.12);
-  --glass-border: rgba(238, 217, 185, 0.22);
-  --glass-border-strong: rgba(238, 217, 185, 0.35);
-  --glass-blur: blur(20px);
-  --glass-blur-strong: blur(40px);
-  
-  /* Surface Colors */
-  --surface-primary: rgba(238, 217, 185, 0.98);
-  --surface-muted: rgba(94, 0, 6, 0.85);
-  --surface-dark: rgba(0, 0, 0, 0.7);
-  --surface-overlay: rgba(20, 0, 2, 0.85);
-  
-  /* Text Colors */
-  --text-primary: #ffffff;
-  --text-secondary: rgba(255, 241, 232, 0.82);
-  --text-muted: rgba(255, 241, 232, 0.6);
-  --text-inverse: #1b0b05;
-  
-  /* Accent Colors */
-  --accent: var(--brand-accent);
-  --accent-hover: #b3330f;
-  --accent-secondary: var(--brand-main);
-  --accent-gradient: linear-gradient(135deg, #9B0F06 0%, #D53E0F 50%, #EED9B9 100%);
-  --accent-glow: 0 0 26px rgba(213, 62, 15, 0.55);
-  
-  /* Borders */
-  --border-soft: 1px solid var(--glass-border);
-  --border-strong: 1px solid var(--glass-border-strong);
-  
-  /* Shadows */
-  --shadow-soft: 0 8px 32px rgba(0, 0, 0, 0.5);
-  --shadow-medium: 0 14px 52px rgba(0, 0, 0, 0.65);
-  --shadow-strong: 0 22px 70px rgba(0, 0, 0, 0.8);
-  --shadow-glow: 0 0 34px rgba(213, 62, 15, 0.55);
-  --shadow-inner: inset 0 1px 0 rgba(238, 217, 185, 0.14);
+  /* Layered surfaces. Each step up is a lighter grey, which is what creates
+     depth in a monochrome interface — shadows alone do almost nothing on near-black. */
+  --surface-1: #121315;
+  --surface-2: #17181a;
+  --surface-3: #1e1f22;
+  --surface-hover: rgba(255, 255, 255, 0.04);
+  --surface-active: rgba(255, 255, 255, 0.08);
+
+  /* Kept for backwards compatibility with existing screens */
+  --surface-primary: var(--surface-2);
+  --surface-muted: var(--surface-1);
+  --surface-dark: #0a0a0b;
+  --surface-overlay: rgba(0, 0, 0, 0.72);
+
+  --glass-bg: rgba(255, 255, 255, 0.04);
+  --glass-bg-strong: rgba(255, 255, 255, 0.07);
+  --glass-border: rgba(255, 255, 255, 0.09);
+  --glass-border-strong: rgba(255, 255, 255, 0.16);
+  --glass-blur: blur(16px);
+  --glass-blur-strong: blur(28px);
+
+  --text-primary: #fafafa;
+  --text-secondary: rgba(250, 250, 250, 0.72);
+  --text-muted: rgba(250, 250, 250, 0.45);
+  --text-inverse: #0a0a0b;
+
+  --border: #2a2c30;
+  --border-subtle: rgba(255, 255, 255, 0.07);
+
+  --accent: #3b82f6;
+  --accent-hover: #2f74e0;
+  --accent-soft: rgba(59, 130, 246, 0.14);
+  --accent-contrast: #ffffff;
+  /* Barely a gradient. A flat accent with a hint of depth, not a rainbow. */
+  --accent-gradient: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%);
+  --accent-glow: 0 0 0 3px rgba(59, 130, 246, 0.22);
+
+  /* Legacy aliases */
+  --brand-deep: #0a0a0b;
+  --brand-main: var(--accent);
+  --brand-accent: var(--accent);
+  --brand-soft: var(--surface-2);
+  --accent-secondary: var(--accent);
+
+  --border-soft: 1px solid var(--border-subtle);
+  --border-strong: 1px solid var(--border);
+
+  --shadow-soft: 0 2px 8px rgba(0, 0, 0, 0.4);
+  --shadow-medium: 0 8px 24px rgba(0, 0, 0, 0.5);
+  --shadow-strong: 0 16px 48px rgba(0, 0, 0, 0.6);
+  --shadow-glow: var(--accent-glow);
+  --shadow-inner: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+
+  /* Video surfaces stay near-black in both themes; a light letterbox around a
+     video tile is unpleasant to look at regardless of theme preference. */
+  --video-bg: #08090a;
+  --video-placeholder: linear-gradient(150deg, #1c1d20 0%, #101113 100%);
+  --video-chrome: #0d0e10;
+  --video-surface: #16171a;
+  --video-surface-2: #212226;
+  --video-border: rgba(255, 255, 255, 0.09);
+  --video-text: #fafafa;
+  --video-text-muted: rgba(250, 250, 250, 0.6);
 }
 
-/* Light Theme */
+/* ----------------------------------------------------------------- light -- */
 :root[data-theme="light"] {
-  /* Brand Colors (Reds + Soft background) */
-  --brand-deep: #5E0006;
-  --brand-main: #9B0F06;
-  --brand-accent: #D53E0F;
-  --brand-soft: #EED9B9;
-
-  /* Backgrounds */
-  --background: var(--brand-soft);
+  --background: #fafafa;
   --background-soft: #ffffff;
-  --background-gradient: radial-gradient(circle at 20% 40%, rgba(213, 62, 15, 0.16) 0%, transparent 55%),
-    radial-gradient(circle at 80% 80%, rgba(155, 15, 6, 0.12) 0%, transparent 55%),
-    linear-gradient(180deg, #ffffff 0%, #EED9B9 100%);
-  
-  /* Glassmorphism Variables */
-  --glass-bg: rgba(255, 255, 255, 0.9);
-  --glass-bg-strong: rgba(255, 255, 255, 0.98);
-  --glass-border: rgba(94, 0, 6, 0.08);
-  --glass-border-strong: rgba(94, 0, 6, 0.18);
-  --glass-blur: blur(20px);
-  --glass-blur-strong: blur(40px);
-  
-  /* Surface Colors */
-  --surface-primary: rgba(30, 6, 4, 0.98);
-  --surface-muted: rgba(255, 255, 255, 0.7);
-  --surface-dark: rgba(94, 0, 6, 0.8);
-  --surface-overlay: rgba(0, 0, 0, 0.35);
-  
-  /* Text Colors */
-  --text-primary: #3b0f09;
-  --text-secondary: rgba(59, 15, 9, 0.78);
-  --text-muted: rgba(59, 15, 9, 0.6);
+  --background-gradient: radial-gradient(
+      circle at 15% 0%,
+      rgba(37, 99, 235, 0.05) 0%,
+      transparent 45%
+    ),
+    linear-gradient(180deg, #ffffff 0%, #f4f5f7 100%);
+
+  --surface-1: #ffffff;
+  --surface-2: #ffffff;
+  --surface-3: #f4f5f7;
+  --surface-hover: rgba(10, 10, 11, 0.035);
+  --surface-active: rgba(10, 10, 11, 0.07);
+
+  --surface-primary: var(--surface-2);
+  --surface-muted: var(--surface-3);
+  --surface-dark: #ffffff;
+  --surface-overlay: rgba(10, 10, 11, 0.45);
+
+  --glass-bg: rgba(255, 255, 255, 0.85);
+  --glass-bg-strong: rgba(255, 255, 255, 0.96);
+  --glass-border: rgba(10, 10, 11, 0.08);
+  --glass-border-strong: rgba(10, 10, 11, 0.14);
+  --glass-blur: blur(16px);
+  --glass-blur-strong: blur(28px);
+
+  --text-primary: #0a0a0b;
+  --text-secondary: rgba(10, 10, 11, 0.68);
+  --text-muted: rgba(10, 10, 11, 0.45);
   --text-inverse: #ffffff;
-  
-  /* Accent Colors */
-  --accent: var(--brand-accent);
-  --accent-hover: #b3330f;
-  --accent-secondary: var(--brand-main);
-  --accent-gradient: linear-gradient(135deg, #D53E0F 0%, #9B0F06 40%, #5E0006 100%);
-  --accent-glow: 0 0 22px rgba(155, 15, 6, 0.45);
-  
-  /* Borders */
-  --border-soft: 1px solid var(--glass-border);
-  --border-strong: 1px solid var(--glass-border-strong);
-  
-  /* Shadows */
-  --shadow-soft: 0 8px 32px rgba(94, 0, 6, 0.16);
-  --shadow-medium: 0 12px 48px rgba(94, 0, 6, 0.26);
-  --shadow-strong: 0 20px 64px rgba(94, 0, 6, 0.32);
-  --shadow-glow: 0 0 30px rgba(213, 62, 15, 0.35);
-  --shadow-inner: inset 0 1px 0 rgba(255, 255, 255, 0.65);
+
+  --border: #e3e5e8;
+  --border-subtle: rgba(10, 10, 11, 0.08);
+
+  --accent: #2563eb;
+  --accent-hover: #1d4ed8;
+  --accent-soft: rgba(37, 99, 235, 0.1);
+  --accent-contrast: #ffffff;
+  --accent-gradient: linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%);
+  --accent-glow: 0 0 0 3px rgba(37, 99, 235, 0.18);
+
+  --brand-deep: #ffffff;
+  --brand-main: var(--accent);
+  --brand-accent: var(--accent);
+  --brand-soft: var(--surface-3);
+  --accent-secondary: var(--accent);
+
+  --border-soft: 1px solid var(--border-subtle);
+  --border-strong: 1px solid var(--border);
+
+  --shadow-soft: 0 1px 3px rgba(10, 10, 11, 0.07), 0 1px 2px rgba(10, 10, 11, 0.04);
+  --shadow-medium: 0 4px 12px rgba(10, 10, 11, 0.09), 0 2px 4px rgba(10, 10, 11, 0.04);
+  --shadow-strong: 0 12px 32px rgba(10, 10, 11, 0.13);
+  --shadow-glow: var(--accent-glow);
+  --shadow-inner: inset 0 1px 0 rgba(255, 255, 255, 0.7);
+
+  --video-bg: #08090a;
+  --video-placeholder: linear-gradient(150deg, #1c1d20 0%, #101113 100%);
+  --video-chrome: #0d0e10;
+  --video-surface: #16171a;
+  --video-surface-2: #212226;
+  --video-border: rgba(255, 255, 255, 0.09);
+  --video-text: #fafafa;
+  --video-text-muted: rgba(250, 250, 250, 0.6);
 }
 
 body {
   margin: 0;
-  font-family: "Inter", -apple-system, BlinkMacSystemFont, "SF Pro Display", "Segoe UI", sans-serif;
+  font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   background: var(--background);
   color: var(--text-primary);
   min-height: 100vh;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   overflow-x: hidden;
-  transition: background-color var(--transition-base), color var(--transition-base);
 }
 
 * {
   box-sizing: border-box;
-  transition: background-color var(--transition-base), 
-              border-color var(--transition-base),
-              color var(--transition-base);
+}
+
+/*
+ * Theme changes are animated; everything else is not. The old rule put a
+ * transition on every property of every element, which made unrelated layout
+ * changes drift into place instead of happening.
+ */
+:root[data-theme] body,
+:root[data-theme] .theme-transition {
+  transition: background-color var(--transition-base), color var(--transition-base);
 }
 
 button,
 input,
-textarea {
+textarea,
+select {
   font-family: inherit;
+  font-size: inherit;
 }
 
-/* Glassmorphism Utility Classes */
+/* Visible focus for keyboard users, suppressed for mouse clicks. */
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+::selection {
+  background: var(--accent-soft);
+  color: var(--text-primary);
+}
+
+/* Glassmorphism utility classes */
 .glass {
   background: var(--glass-bg);
   backdrop-filter: var(--glass-blur);
   -webkit-backdrop-filter: var(--glass-blur);
   border: var(--border-soft);
-  box-shadow: var(--shadow-soft), var(--shadow-inner);
+  box-shadow: var(--shadow-soft);
 }
 
 .glass-strong {
@@ -208,18 +284,18 @@ textarea {
   backdrop-filter: var(--glass-blur-strong);
   -webkit-backdrop-filter: var(--glass-blur-strong);
   border: var(--border-strong);
-  box-shadow: var(--shadow-medium), var(--shadow-inner);
+  box-shadow: var(--shadow-medium);
 }
 
-/* Global Animations */
+/* Animations */
 @keyframes float {
-  0%, 100% { transform: translateY(0px) rotate(0deg); }
-  50% { transform: translateY(-20px) rotate(5deg); }
+  0%, 100% { transform: translateY(0px); }
+  50% { transform: translateY(-20px); }
 }
 
 @keyframes float-reverse {
-  0%, 100% { transform: translateY(0px) rotate(0deg); }
-  50% { transform: translateY(20px) rotate(-5deg); }
+  0%, 100% { transform: translateY(0px); }
+  50% { transform: translateY(20px); }
 }
 
 @keyframes shimmer {
@@ -233,30 +309,18 @@ textarea {
 }
 
 @keyframes glow-pulse {
-  0%, 100% { opacity: 0.5; filter: blur(20px); }
-  50% { opacity: 1; filter: blur(30px); }
+  0%, 100% { opacity: 0.5; }
+  50% { opacity: 1; }
 }
 
 @keyframes slide-up {
-  from {
-    opacity: 0;
-    transform: translateY(30px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
+  from { opacity: 0; transform: translateY(12px); }
+  to { opacity: 1; transform: translateY(0); }
 }
 
 @keyframes slide-down {
-  from {
-    opacity: 0;
-    transform: translateY(-20px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
+  from { opacity: 0; transform: translateY(-12px); }
+  to { opacity: 1; transform: translateY(0); }
 }
 
 @keyframes fade-in {
@@ -265,93 +329,44 @@ textarea {
 }
 
 @keyframes scale-in {
-  from {
-    opacity: 0;
-    transform: scale(0.9);
-  }
-  to {
-    opacity: 1;
-    transform: scale(1);
-  }
+  from { opacity: 0; transform: scale(0.96); }
+  to { opacity: 1; transform: scale(1); }
 }
 
 @keyframes slide-in-right {
-  from {
-    opacity: 0;
-    transform: translateX(30px);
-  }
-  to {
-    opacity: 1;
-    transform: translateX(0);
-  }
+  from { opacity: 0; transform: translateX(16px); }
+  to { opacity: 1; transform: translateX(0); }
 }
 
 @keyframes slide-in-left {
-  from {
-    opacity: 0;
-    transform: translateX(-30px);
-  }
-  to {
-    opacity: 1;
-    transform: translateX(0);
-  }
+  from { opacity: 0; transform: translateX(-16px); }
+  to { opacity: 1; transform: translateX(0); }
 }
 
 @keyframes bounce-in {
-  0% {
-    opacity: 0;
-    transform: scale(0.3);
-  }
-  50% {
-    opacity: 1;
-    transform: scale(1.05);
-  }
-  70% {
-    transform: scale(0.9);
-  }
-  100% {
-    transform: scale(1);
-  }
+  0% { opacity: 0; transform: scale(0.9); }
+  60% { opacity: 1; transform: scale(1.02); }
+  100% { transform: scale(1); }
 }
 
 @keyframes pulse {
-  0%, 100% {
-    opacity: 1;
-    transform: scale(1);
-  }
-  50% {
-    opacity: 0.8;
-    transform: scale(1.05);
-  }
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.45; }
 }
 
 @keyframes rotate-in {
-  from {
-    opacity: 0;
-    transform: rotate(-180deg) scale(0.8);
-  }
-  to {
-    opacity: 1;
-    transform: rotate(0deg) scale(1);
-  }
+  from { opacity: 0; transform: rotate(-90deg) scale(0.9); }
+  to { opacity: 1; transform: rotate(0deg) scale(1); }
 }
 
 @keyframes glow {
-  0%, 100% {
-    box-shadow: 0 0 20px rgba(102, 126, 234, 0.3);
-  }
-  50% {
-    box-shadow: 0 0 40px rgba(102, 126, 234, 0.6);
-  }
+  0%, 100% { box-shadow: 0 0 0 0 rgba(59, 130, 246, 0.3); }
+  50% { box-shadow: 0 0 0 6px rgba(59, 130, 246, 0); }
 }
 
 @keyframes shimmer-sweep {
-  0% {
-    transform: translateX(-100%);
-  }
-  100% {
-    transform: translateX(100%);
-  }
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(100%); }
 }
 
 @keyframes spin {
@@ -359,9 +374,19 @@ textarea {
   to { transform: rotate(360deg); }
 }
 
-/* Smooth scroll */
 html {
   scroll-behavior: smooth;
 }
 
-
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

@@ -1,209 +1,175 @@
-import React, { useState, useEffect, useCallback, useRef } from "react";
+import React, { useEffect, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import { useSocket } from "../context/SocketProvider";
+import { useMedia } from "../context/MediaProvider";
+import { useAuth } from "../context/AuthProvider";
+import { getDisplayName, setDisplayName } from "../service/identity";
+import { hasTurnConfigured } from "../service/iceServers";
 import "./Preview.css";
 
+/** Turns "ada.lovelace@example.com" into "Ada Lovelace" as a starting point. */
+function nameFromEmail(email) {
+  if (!email) return "";
+  return email
+    .split("@")[0]
+    .split(/[._-]+/)
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
+}
+
+/**
+ * Pre-join screen: pick your devices, check how you look, then enter the room.
+ *
+ * The stream opened here is the one the call uses. Previously Room called
+ * getUserMedia() again on arrival, which discarded whatever was chosen here.
+ */
 const PreviewPage = () => {
   const { roomCode } = useParams();
-  const socket = useSocket();
   const navigate = useNavigate();
-  const videoRef = useRef(null);
 
-  const [userName, setUserName] = useState("");
-  const [stream, setStream] = useState(null);
-  const [isAudioMuted, setIsAudioMuted] = useState(false);
-  const [isVideoOff, setIsVideoOff] = useState(false);
-  const [devices, setDevices] = useState({
-    audioInputs: [],
-    videoInputs: [],
-    audioOutputs: []
-  });
-  const [selectedDevices, setSelectedDevices] = useState({
-    audioInput: "",
-    videoInput: "",
-    audioOutput: ""
-  });
-  const [isLoading, setIsLoading] = useState(true);
-  const [error, setError] = useState("");
+  const {
+    stream,
+    error,
+    isAcquiring,
+    devices,
+    selectedDevices,
+    isAudioMuted,
+    isVideoOff,
+    acquire,
+    refreshDevices,
+    selectDevice,
+    toggleAudio,
+    toggleVideo,
+    setReadyToJoin,
+  } = useMedia();
 
-  // Get available devices
-  const getDevices = async () => {
-    try {
-      const deviceList = await navigator.mediaDevices.enumerateDevices();
-      const audioInputs = deviceList.filter(device => device.kind === 'audioinput');
-      const videoInputs = deviceList.filter(device => device.kind === 'videoinput');
-      const audioOutputs = deviceList.filter(device => device.kind === 'audiooutput');
+  const { user, isSignedIn } = useAuth();
 
-      setDevices({
-        audioInputs,
-        videoInputs,
-        audioOutputs
-      });
+  const [userName, setUserName] = useState(
+    () => getDisplayName() || nameFromEmail(user?.email)
+  );
+  const [videoEl, setVideoEl] = useState(null);
+  const [copied, setCopied] = useState(false);
 
-      // Set default devices
-      if (audioInputs.length > 0) {
-        setSelectedDevices(prev => ({ ...prev, audioInput: audioInputs[0].deviceId }));
-      }
-      if (videoInputs.length > 0) {
-        setSelectedDevices(prev => ({ ...prev, videoInput: videoInputs[0].deviceId }));
-      }
-      if (audioOutputs.length > 0) {
-        setSelectedDevices(prev => ({ ...prev, audioOutput: audioOutputs[0].deviceId }));
-      }
-    } catch (err) {
-      console.error("Error getting devices:", err);
-      setError("Failed to get device list");
-    }
-  };
+  // Someone arriving on a shared invite link without an account is asked what
+  // to be called in this meeting. Signed-in users already have a name, so they
+  // never see this.
+  const [showGuestPrompt, setShowGuestPrompt] = useState(
+    () => !isSignedIn && !getDisplayName()
+  );
+  const [guestNameDraft, setGuestNameDraft] = useState("");
 
-  // Initialize camera and mic
-  const initializeMedia = async () => {
-    try {
-      setIsLoading(true);
-      setError("");
-
-      const constraints = {
-        audio: selectedDevices.audioInput 
-          ? { deviceId: { exact: selectedDevices.audioInput } }
-          : true,
-        video: selectedDevices.videoInput
-          ? { deviceId: { exact: selectedDevices.videoInput }, width: { ideal: 1280 }, height: { ideal: 720 } }
-          : { width: { ideal: 1280 }, height: { ideal: 720 } }
-      };
-
-      const mediaStream = await navigator.mediaDevices.getUserMedia(constraints);
-      
-      console.log("Stream obtained:", mediaStream);
-      console.log("Video tracks:", mediaStream.getVideoTracks());
-      console.log("Audio tracks:", mediaStream.getAudioTracks());
-      
-      setStream(mediaStream);
-
-      if (videoRef.current) {
-        videoRef.current.srcObject = mediaStream;
-        // Force play after setting srcObject
-        videoRef.current.play().catch(err => {
-          console.error("Play error:", err);
-        });
-      }
-
-      setIsLoading(false);
-    } catch (err) {
-      console.error("Error accessing media devices:", err);
-      setError(
-        err.name === "NotAllowedError"
-          ? "Camera/microphone access denied. Please allow permissions."
-          : "Failed to access camera/microphone."
-      );
-      setIsLoading(false);
-    }
-  };
-
-  // Initialize on mount
+  // Open the camera once on arrival, then read the device list again — labels
+  // are blank until permission has been granted.
   useEffect(() => {
-    getDevices();
+    let cancelled = false;
+    (async () => {
+      const opened = await acquire();
+      if (!cancelled && opened) {
+        await refreshDevices();
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // Intentionally runs once. acquire/refreshDevices change identity when the
+    // selected device changes, and re-running here would reopen the camera in a
+    // loop; device switches are handled by handleDeviceChange instead.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Initialize media when devices are selected
+  // Callback ref rather than useRef: the <video> is conditionally rendered, so a
+  // plain ref can still be null on the render where the stream first arrives.
   useEffect(() => {
-    if (selectedDevices.audioInput && selectedDevices.videoInput) {
-      initializeMedia();
-    }
-
-    return () => {
-      if (stream) {
-        stream.getTracks().forEach(track => track.stop());
-      }
-    };
-  }, [selectedDevices.audioInput, selectedDevices.videoInput]);
-
-  // Update video element when stream changes
-  useEffect(() => {
-    if (videoRef.current && stream) {
-      videoRef.current.srcObject = stream;
-      videoRef.current.play().catch(err => {
-        console.error("Error playing video:", err);
-      });
-    }
-  }, [stream]);
-
-  // Toggle Audio
-  const toggleAudio = () => {
+    if (!videoEl) return;
+    videoEl.srcObject = stream || null;
     if (stream) {
-      const audioTrack = stream.getAudioTracks()[0];
-      if (audioTrack) {
-        audioTrack.enabled = !audioTrack.enabled;
-        setIsAudioMuted(!audioTrack.enabled);
-      }
+      videoEl.play().catch(() => {});
     }
+  }, [videoEl, stream]);
+
+  const handleDeviceChange = (kind, deviceId) => {
+    selectDevice(kind, deviceId);
+    // Reopen with the new device. Passing it explicitly avoids waiting a render
+    // for the selection state to settle.
+    acquire({ [kind]: deviceId });
   };
 
-  // Toggle Video
-  const toggleVideo = () => {
-    if (stream) {
-      const videoTrack = stream.getVideoTracks()[0];
-      if (videoTrack) {
-        videoTrack.enabled = !videoTrack.enabled;
-        setIsVideoOff(!videoTrack.enabled);
-      }
-    }
+  const copyCode = () => {
+    navigator.clipboard
+      .writeText(`${window.location.origin}/preview/${roomCode}`)
+      .then(() => {
+        setCopied(true);
+        setTimeout(() => setCopied(false), 2000);
+      })
+      .catch(() => {});
   };
 
-  // Handle device change
-  const handleDeviceChange = (type, deviceId) => {
-    setSelectedDevices(prev => ({
-      ...prev,
-      [type]: deviceId
-    }));
-  };
-
-  // Copy room code
-  const copyRoomCode = () => {
-    navigator.clipboard.writeText(roomCode).then(() => {
-      alert("Room code copied to clipboard!");
-    }).catch(err => {
-      console.error("Failed to copy:", err);
-    });
-  };
-
-  // Handle join room
-  const handleJoinRoom = useCallback(
-    (data) => {
-      const { room } = data;
-      navigate(`/room/${room}`);
-    },
-    [navigate]
-  );
-
-  useEffect(() => {
-    socket.on("room:join", handleJoinRoom);
-    return () => {
-      socket.off("room:join", handleJoinRoom);
-    };
-  }, [socket, handleJoinRoom]);
-
-  // Join meeting
   const joinMeeting = () => {
-    if (!userName.trim()) {
-      alert("Please enter your name");
-      return;
-    }
+    const name = userName.trim();
+    if (!name) return;
+    setDisplayName(name);
+    setReadyToJoin(true);
+    navigate(`/room/${roomCode}`);
+  };
 
-    if (!stream) {
-      alert("Please allow camera and microphone access");
-      return;
-    }
+  // A name is the only hard requirement. Someone whose camera is busy or
+  // blocked can still join and see and hear everyone else, which is far more
+  // useful than being locked out of the call entirely.
+  const canJoin = Boolean(userName.trim());
+  const hasNoMedia = !stream && !isAcquiring;
 
-    // Save display name so Room and Chat show correct "my" name
-    localStorage.setItem("zenith_user_email", userName.trim());
-
-    // Emit room:join with name as email
-    socket.emit("room:join", { email: userName.trim(), room: roomCode });
+  const confirmGuestName = (e) => {
+    e.preventDefault();
+    const name = guestNameDraft.trim();
+    if (!name) return;
+    setUserName(name);
+    setShowGuestPrompt(false);
   };
 
   return (
     <div className="preview-container">
-      {/* Header */}
+      {showGuestPrompt && (
+        <div className="guest-modal-overlay">
+          <form onSubmit={confirmGuestName} className="guest-modal">
+            <h2>You've been invited to a meeting</h2>
+            <p>What should people call you in this call?</p>
+
+            <input
+              type="text"
+              value={guestNameDraft}
+              onChange={(e) => setGuestNameDraft(e.target.value)}
+              placeholder="Your name"
+              className="guest-modal-input"
+              maxLength={40}
+              autoFocus
+              aria-label="Your name"
+            />
+
+            <button
+              type="submit"
+              disabled={!guestNameDraft.trim()}
+              className="guest-modal-submit"
+            >
+              Continue
+            </button>
+
+            <p className="guest-modal-note">
+              You don't need an account to join. Room code{" "}
+              <strong>{roomCode}</strong>.
+            </p>
+
+            <button
+              type="button"
+              onClick={() => navigate("/login")}
+              className="guest-modal-link"
+            >
+              Or sign in to your account
+            </button>
+          </form>
+        </div>
+      )}
+
       <div className="preview-header">
         <div className="preview-logo">
           <div className="logo-icon">Z</div>
@@ -213,213 +179,252 @@ const PreviewPage = () => {
         </div>
       </div>
 
-      {/* Main Content */}
       <div className="preview-content">
         <div className="preview-left">
-          {/* Video Preview */}
           <div className="video-preview-container">
-            {isLoading && (
+            {isAcquiring && (
               <div className="preview-loading">
-                <div className="spinner"></div>
-                <p>Loading camera...</p>
+                <div className="spinner" />
+                <p>Starting camera…</p>
               </div>
             )}
 
-            {error && (
+            {error && !isAcquiring && (
               <div className="preview-error">
                 <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"
+                  />
                 </svg>
                 <p>{error}</p>
-                <button onClick={initializeMedia} className="retry-btn">
-                  Retry
+                <button onClick={() => acquire()} className="retry-btn">
+                  Try again
                 </button>
               </div>
             )}
 
-            {!isLoading && !error && (
+            {!isAcquiring && !error && (
               <>
                 <video
-                  ref={videoRef}
+                  ref={setVideoEl}
                   autoPlay
                   playsInline
                   muted
-                  className={`video-preview ${isVideoOff ? 'video-off' : ''}`}
-                  onLoadedMetadata={() => {
-                    if (videoRef.current) {
-                      videoRef.current.play();
-                    }
-                  }}
+                  className={`video-preview ${isVideoOff ? "video-off" : ""}`}
                 />
                 {isVideoOff && (
                   <div className="video-off-overlay">
-                    <div className="user-avatar-large">{userName.charAt(0).toUpperCase() || "?"}</div>
+                    <div className="user-avatar-large">
+                      {userName.charAt(0).toUpperCase() || "?"}
+                    </div>
                     <p>Camera is off</p>
                   </div>
                 )}
-                <div className="preview-name-label">{userName || "Your Name"}</div>
+                <div className="preview-name-label">
+                  {userName || "Your name"}
+                </div>
               </>
             )}
 
-            {/* Controls */}
             <div className="preview-controls">
               <button
                 onClick={toggleAudio}
-                className={`preview-control-btn ${isAudioMuted ? 'danger' : ''}`}
+                disabled={!stream}
+                className={`preview-control-btn ${isAudioMuted ? "danger" : ""}`}
                 title={isAudioMuted ? "Unmute" : "Mute"}
+                aria-pressed={isAudioMuted}
               >
-                {isAudioMuted ? (
-                  <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z" />
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2" />
-                  </svg>
-                ) : (
-                  <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" />
-                  </svg>
-                )}
+                <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M19 11a7 7 0 01-14 0m7 7v4m0-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z"
+                  />
+                  {isAudioMuted && (
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth={2}
+                      d="M3 3l18 18"
+                    />
+                  )}
+                </svg>
               </button>
 
               <button
                 onClick={toggleVideo}
-                className={`preview-control-btn ${isVideoOff ? 'danger' : ''}`}
-                title={isVideoOff ? "Turn On Camera" : "Turn Off Camera"}
+                disabled={!stream}
+                className={`preview-control-btn ${isVideoOff ? "danger" : ""}`}
+                title={isVideoOff ? "Turn camera on" : "Turn camera off"}
+                aria-pressed={isVideoOff}
               >
-                {isVideoOff ? (
-                  <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 3l18 18" />
-                  </svg>
-                ) : (
-                  <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
-                  </svg>
-                )}
+                <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z"
+                  />
+                  {isVideoOff && (
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth={2}
+                      d="M3 3l18 18"
+                    />
+                  )}
+                </svg>
               </button>
             </div>
           </div>
         </div>
 
-        {/* Right Panel */}
         <div className="preview-right">
           <div className="preview-info-card">
             <h1 className="preview-title">Ready to join?</h1>
-            <p className="preview-subtitle">Set up your camera and microphone</p>
+            <p className="preview-subtitle">
+              Check your camera and microphone before entering.
+            </p>
 
-            {/* Name Input */}
             <div className="preview-form-group">
-              <label>Your Name</label>
+              <label htmlFor="preview-name">Your name</label>
               <input
+                id="preview-name"
                 type="text"
                 value={userName}
                 onChange={(e) => setUserName(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && canJoin) joinMeeting();
+                }}
                 placeholder="Enter your name"
                 className="preview-input"
+                maxLength={40}
               />
             </div>
 
-            {/* Room Code Display */}
             <div className="preview-form-group">
-              <label>Room Code</label>
+              <label htmlFor="preview-room">Room code</label>
               <div className="room-code-display">
                 <input
+                  id="preview-room"
                   type="text"
                   value={roomCode}
                   readOnly
                   className="preview-input room-code-input"
                 />
-                <button onClick={copyRoomCode} className="copy-code-btn" title="Copy room code">
-                  <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
-                  </svg>
+                <button
+                  onClick={copyCode}
+                  className="copy-code-btn"
+                  title="Copy invite link"
+                >
+                  {copied ? (
+                    <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        strokeWidth={2}
+                        d="M5 13l4 4L19 7"
+                      />
+                    </svg>
+                  ) : (
+                    <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        strokeWidth={2}
+                        d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"
+                      />
+                    </svg>
+                  )}
                 </button>
               </div>
             </div>
 
-            {/* Device Selection */}
             <div className="device-settings">
-              <h3 className="device-settings-title">Device Settings</h3>
+              <h3 className="device-settings-title">Devices</h3>
 
-              {/* Microphone */}
               <div className="preview-form-group">
-                <label>
-                  <svg className="device-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" />
-                  </svg>
-                  Microphone
-                </label>
+                <label htmlFor="device-mic">Microphone</label>
                 <select
+                  id="device-mic"
                   value={selectedDevices.audioInput}
-                  onChange={(e) => handleDeviceChange('audioInput', e.target.value)}
+                  onChange={(e) =>
+                    handleDeviceChange("audioInput", e.target.value)
+                  }
                   className="device-select"
+                  disabled={devices.audioInputs.length === 0}
                 >
-                  {devices.audioInputs.map(device => (
+                  {devices.audioInputs.length === 0 && (
+                    <option>No microphone found</option>
+                  )}
+                  {devices.audioInputs.map((device) => (
                     <option key={device.deviceId} value={device.deviceId}>
-                      {device.label || `Microphone ${device.deviceId.slice(0, 5)}`}
+                      {device.label || "Microphone"}
                     </option>
                   ))}
                 </select>
               </div>
 
-              {/* Camera */}
               <div className="preview-form-group">
-                <label>
-                  <svg className="device-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
-                  </svg>
-                  Camera
-                </label>
+                <label htmlFor="device-cam">Camera</label>
                 <select
+                  id="device-cam"
                   value={selectedDevices.videoInput}
-                  onChange={(e) => handleDeviceChange('videoInput', e.target.value)}
+                  onChange={(e) =>
+                    handleDeviceChange("videoInput", e.target.value)
+                  }
                   className="device-select"
+                  disabled={devices.videoInputs.length === 0}
                 >
-                  {devices.videoInputs.map(device => (
+                  {devices.videoInputs.length === 0 && (
+                    <option>No camera found</option>
+                  )}
+                  {devices.videoInputs.map((device) => (
                     <option key={device.deviceId} value={device.deviceId}>
-                      {device.label || `Camera ${device.deviceId.slice(0, 5)}`}
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              {/* Speaker */}
-              <div className="preview-form-group">
-                <label>
-                  <svg className="device-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.536 8.464a5 5 0 010 7.072m2.828-9.9a9 9 0 010 12.728M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z" />
-                  </svg>
-                  Speaker
-                </label>
-                <select
-                  value={selectedDevices.audioOutput}
-                  onChange={(e) => handleDeviceChange('audioOutput', e.target.value)}
-                  className="device-select"
-                >
-                  {devices.audioOutputs.map(device => (
-                    <option key={device.deviceId} value={device.deviceId}>
-                      {device.label || `Speaker ${device.deviceId.slice(0, 5)}`}
+                      {device.label || "Camera"}
                     </option>
                   ))}
                 </select>
               </div>
             </div>
 
-            {/* Join Button */}
             <button
               onClick={joinMeeting}
-              disabled={!userName.trim() || !stream}
+              disabled={!canJoin}
               className="join-meeting-btn"
             >
               <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14 5l7 7m0 0l-7 7m7-7H3" />
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M14 5l7 7m0 0l-7 7m7-7H3"
+                />
               </svg>
-              Join Meeting
+              {hasNoMedia ? "Join without camera" : "Join meeting"}
             </button>
 
-            {/* Info Text */}
+            {hasNoMedia && (
+              <p className="preview-info-text preview-warning">
+                You'll join without sending video or audio, but you'll still see
+                and hear everyone else.
+              </p>
+            )}
+
             <p className="preview-info-text">
-              🔒 Share the room code with others to invite them
+              Share the room code to invite others. Rooms hold up to 5 people.
             </p>
+
+            {!hasTurnConfigured() && (
+              <p className="preview-info-text preview-warning">
+                No TURN server is configured, so calls may fail between
+                restrictive networks.
+              </p>
+            )}
           </div>
         </div>
       </div>

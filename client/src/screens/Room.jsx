@@ -1,833 +1,546 @@
-import React, { useEffect, useCallback, useState, useRef } from "react";
-import peer from "../service/peer";
-import { useSocket } from "../context/SocketProvider";
-import { useParams } from "react-router-dom";
+import React, { useCallback, useEffect, useRef, useState } from "react";
+import { useNavigate, useParams } from "react-router-dom";
+import { useMedia } from "../context/MediaProvider";
+import { useAuth } from "../context/AuthProvider";
+import { useRoom } from "../hooks/useRoom";
+import { getDisplayName } from "../service/identity";
+import VideoTile from "../components/VideoTile";
 import Chat from "../components/Chat";
 import "./Room.css";
 
+const REACTIONS = ["👍", "❤️", "😂", "😮", "🎉", "👏"];
+
 const RoomPage = () => {
   const { roomId } = useParams();
-  const socket = useSocket();
-  const [remoteSocketId, setRemoteSocketId] = useState(null);
-  const [myStream, setMyStream] = useState();
-  const [remoteStream, setRemoteStream] = useState();
-  const [isAudioMuted, setIsAudioMuted] = useState(false);
-  const [isVideoOff, setIsVideoOff] = useState(false);
-  const [isScreenSharing, setIsScreenSharing] = useState(false);
-  const [callStarted, setCallStarted] = useState(false);
-  const [error, setError] = useState(null);
-  const [connectionState, setConnectionState] = useState("new");
-  const [myEmail, setMyEmail] = useState("");
-  const [remoteDisplayName, setRemoteDisplayName] = useState("");
-  const mainVideoRef = useRef(null);
-  const pipVideoRef = useRef(null);
-  
-  // UI State Management
-  const [activePanel, setActivePanel] = useState(null); // 'info', 'chat', 'participants', null
-  const [pendingAdmissions, setPendingAdmissions] = useState([]); // Array of {id, email}
-  const [participants, setParticipants] = useState([]); // Array of {id, email, isHost}
-  const [isHost, setIsHost] = useState(false);
-  const [reaction, setReaction] = useState(null); // Current reaction to display
-  const [showReactionsPicker, setShowReactionsPicker] = useState(false);
-  
-  // Store original video track for screen share toggle
-  const originalVideoTrackRef = useRef(null);
-  const reactionTimeoutRef = useRef(null);
+  const navigate = useNavigate();
 
-  // Determine if I'm the host (first person in room)
+  const { isSignedIn } = useAuth();
+
+  const {
+    stream,
+    isAudioMuted,
+    isVideoOff,
+    readyToJoin,
+    toggleAudio,
+    toggleVideo,
+    stopStream,
+  } = useMedia();
+
+  const {
+    selfId,
+    peers,
+    roster,
+    hostId,
+    joinState,
+    joinError,
+    socketStatus,
+    messages,
+    reactions,
+    sendMessage,
+    sendReaction,
+    replaceVideoTrack,
+    leave,
+  } = useRoom(roomId);
+
+  const [activePanel, setActivePanel] = useState(null);
+  const [screenStream, setScreenStream] = useState(null);
+  const [showReactionPicker, setShowReactionPicker] = useState(false);
+  const [toast, setToast] = useState(null);
+  const [unreadCount, setUnreadCount] = useState(0);
+
+  // The camera track displaced by screen sharing, kept so it can be restored.
+  const cameraTrackRef = useRef(null);
+  // Set once the user has chosen to leave, so the "no stream" guard below does
+  // not bounce them to the pre-join screen the moment the camera is released.
+  const isLeavingRef = useRef(false);
+
+  const displayName = getDisplayName() || "You";
+  const isScreenSharing = Boolean(screenStream);
+
+  // Someone landing on /room/:id directly hasn't chosen a name or checked their
+  // devices yet, so send them through the pre-join screen.
+  //
+  // This keys off the explicit intent to join rather than off having a stream.
+  // Testing for a stream meant anyone whose camera was busy or blocked got
+  // bounced straight back out, with no way into the call at all.
   useEffect(() => {
-    if (!socket || !socket.id) return;
-    if (participants.length === 0 || (participants.length === 1 && participants[0].id === socket.id)) {
-      setIsHost(true);
-    } else {
-      setIsHost(false);
+    if (!readyToJoin && !isLeavingRef.current) {
+      navigate(`/preview/${roomId}`, { replace: true });
     }
-  }, [participants, socket]);
+  }, [readyToJoin, roomId, navigate]);
 
-  // Handle user joined - check if admission needed
-  const handleUserJoined = useCallback(({ email, id }) => {
-    console.log(`Email ${email} joined room`);
-    
-    if (!socket || !socket.id) return;
-    
-    // If I'm the host and someone new joined, add to pending admissions
-    if (isHost && id !== socket.id) {
-      setPendingAdmissions(prev => {
-        // Check if already in pending
-        if (!prev.find(p => p.id === id)) {
-          return [...prev, { id, email }];
-        }
-        return prev;
-      });
-      // Remember this participant's name for labeling when we call them
-      setRemoteDisplayName((current) => current || email);
-    } else if (!isHost && id === socket.id) {
-      // I just joined, I'm waiting for admission
-      setRemoteSocketId(null);
-    } else {
-      // Auto-admit if not using admission flow (for now, auto-admit)
-      setRemoteSocketId(id);
-      // Treat this joined user as the remote participant for labels/chat
-      setRemoteDisplayName((current) => current || email);
+  // Unread badge while the chat panel is closed.
+  useEffect(() => {
+    if (messages.length === 0) return;
+    const latest = messages[messages.length - 1];
+    if (activePanel !== "chat" && !latest.isOwn) {
+      setUnreadCount((n) => n + 1);
     }
-  }, [isHost, socket]);
+  }, [messages, activePanel]);
 
-  // Admit a participant
-  const admitParticipant = useCallback((participantId, participantEmail) => {
-    setPendingAdmissions(prev => prev.filter(p => p.id !== participantId));
-    setParticipants(prev => [...prev, { id: participantId, email: participantEmail, isHost: false }]);
-    setRemoteSocketId(participantId);
-    setRemoteDisplayName((current) => current || participantEmail);
+  useEffect(() => {
+    if (activePanel === "chat") setUnreadCount(0);
+  }, [activePanel]);
+
+  const showToast = useCallback((text) => {
+    setToast(text);
+    setTimeout(() => setToast(null), 2200);
   }, []);
 
-  // Deny a participant
-  const denyParticipant = useCallback((participantId) => {
-    setPendingAdmissions(prev => prev.filter(p => p.id !== participantId));
-    // Could emit a socket event here to notify the user, but keeping it UI-only for now
-  }, []);
+  // Reading the current capture from a ref rather than inside a state updater:
+  // stopping tracks is a side effect, and StrictMode double-invokes updaters.
+  const screenStreamRef = useRef(null);
 
-  const handleCallUser = useCallback(async () => {
+  const stopScreenShare = useCallback(async () => {
+    screenStreamRef.current?.getTracks().forEach((track) => track.stop());
+    screenStreamRef.current = null;
+    setScreenStream(null);
+
+    if (cameraTrackRef.current) {
+      await replaceVideoTrack(cameraTrackRef.current);
+      cameraTrackRef.current = null;
+    }
+  }, [replaceVideoTrack]);
+
+  const startScreenShare = useCallback(async () => {
     try {
-      setError(null);
-      const stream = await navigator.mediaDevices.getUserMedia({
-        audio: true,
+      const captured = await navigator.mediaDevices.getDisplayMedia({
         video: true,
+        audio: false,
       });
-      
-      // Store original video track
-      originalVideoTrackRef.current = stream.getVideoTracks()[0];
-      
-      const offer = await peer.getOffer();
-      socket.emit("user:call", { to: remoteSocketId, offer });
-      setMyStream(stream);
-      setCallStarted(true);
+      const screenTrack = captured.getVideoTracks()[0];
+
+      cameraTrackRef.current = stream?.getVideoTracks()[0] || null;
+
+      // replaceTrack() swaps the outbound video on every peer connection without
+      // renegotiating, which is what makes the switch feel instant.
+      await replaceVideoTrack(screenTrack);
+      screenStreamRef.current = captured;
+      setScreenStream(captured);
+
+      // Fired when the user stops sharing from the browser's own bar rather than
+      // our button, which is how most people stop.
+      screenTrack.addEventListener("ended", () => {
+        stopScreenShare();
+      });
     } catch (err) {
-      console.error("Error starting call:", err);
-      setError(err.name === "NotAllowedError" 
-        ? "Camera/microphone access denied. Please allow permissions." 
-        : "Failed to access camera/microphone.");
-    }
-  }, [remoteSocketId, socket]);
-
-  const handleIncommingCall = useCallback(
-    async ({ from, offer, email }) => {
-      try {
-        setError(null);
-        setRemoteSocketId(from);
-        if (email) {
-          setRemoteDisplayName(email);
-        }
-        const stream = await navigator.mediaDevices.getUserMedia({
-          audio: true,
-          video: true,
-        });
-        
-        // Store original video track
-        originalVideoTrackRef.current = stream.getVideoTracks()[0];
-        
-        setMyStream(stream);
-        console.log(`Incoming Call`, from, offer);
-        const ans = await peer.getAnswer(offer);
-        socket.emit("call:accepted", { to: from, ans });
-        setCallStarted(true);
-      } catch (err) {
-        console.error("Error accepting call:", err);
-        setError(err.name === "NotAllowedError" 
-          ? "Camera/microphone access denied. Please allow permissions." 
-          : "Failed to access camera/microphone.");
+      // Cancelling the picker is a normal action, not an error worth surfacing.
+      if (err.name !== "NotAllowedError" && err.name !== "AbortError") {
+        console.error("[room] screen share failed:", err);
+        showToast("Could not start screen sharing.");
       }
-    },
-    [socket]
-  );
-
-  const sendStreams = useCallback(() => {
-    if (!myStream) return;
-    
-    for (const track of myStream.getTracks()) {
-      peer.peer.addTrack(track, myStream);
     }
-  }, [myStream]);
+  }, [stream, replaceVideoTrack, stopScreenShare, showToast]);
 
-  const handleCallAccepted = useCallback(
-    ({ from, ans }) => {
-      peer.setLocalDescription(ans);
-      console.log("Call Accepted!");
-      sendStreams();
-    },
-    [sendStreams]
-  );
-
-  const handleNegoNeeded = useCallback(async () => {
-    const offer = await peer.getOffer();
-    socket.emit("peer:nego:needed", { offer, to: remoteSocketId });
-  }, [remoteSocketId, socket]);
-
-  useEffect(() => {
-    peer.peer.addEventListener("negotiationneeded", handleNegoNeeded);
-    return () => {
-      peer.peer.removeEventListener("negotiationneeded", handleNegoNeeded);
-    };
-  }, [handleNegoNeeded]);
-
-  const handleNegoNeedIncomming = useCallback(
-    async ({ from, offer }) => {
-      const ans = await peer.getAnswer(offer);
-      socket.emit("peer:nego:done", { to: from, ans });
-    },
-    [socket]
-  );
-
-  const handleNegoNeedFinal = useCallback(async ({ ans }) => {
-    await peer.setLocalDescription(ans);
-  }, []);
-
-  // Monitor connection state
-  useEffect(() => {
-    const handleConnectionStateChange = () => {
-      const state = peer.getConnectionState();
-      setConnectionState(state);
-      console.log("Connection state:", state);
-      
-      if (state === "failed" || state === "disconnected") {
-        setError("Connection lost. Please refresh the page.");
-      }
-    };
-
-    if (peer.peer) {
-      peer.peer.addEventListener("connectionstatechange", handleConnectionStateChange);
-      peer.peer.addEventListener("iceconnectionstatechange", handleConnectionStateChange);
+  const toggleScreenShare = useCallback(() => {
+    if (isScreenSharing) {
+      stopScreenShare();
+    } else {
+      startScreenShare();
     }
+  }, [isScreenSharing, startScreenShare, stopScreenShare]);
 
-    return () => {
-      if (peer.peer) {
-        peer.peer.removeEventListener("connectionstatechange", handleConnectionStateChange);
-        peer.peer.removeEventListener("iceconnectionstatechange", handleConnectionStateChange);
-      }
-    };
-  }, []);
+  const handleLeave = useCallback(() => {
+    isLeavingRef.current = true;
+    screenStreamRef.current?.getTracks().forEach((track) => track.stop());
+    screenStreamRef.current = null;
+    leave();
+    stopStream();
 
-  useEffect(() => {
-    peer.peer.addEventListener("track", async (ev) => {
-      const remoteStream = ev.streams;
-      console.log("GOT TRACKS!!");
-      setRemoteStream(remoteStream[0]);
+    // A guest just finished a call — a good moment to offer an account, and the
+    // only moment we know they've actually used the product. Signed-in users go
+    // straight back to the dashboard.
+    navigate("/", {
+      state: isSignedIn ? undefined : { promptSignup: true, roomId },
     });
+  }, [leave, stopStream, navigate, isSignedIn, roomId]);
+
+  const copyInviteLink = useCallback(() => {
+    const link = `${window.location.origin}/preview/${roomId}`;
+    navigator.clipboard
+      .writeText(link)
+      .then(() => showToast("Invite link copied"))
+      .catch(() => showToast("Could not copy the link"));
+  }, [roomId, showToast]);
+
+  const handleReaction = useCallback(
+    (emoji) => {
+      sendReaction(emoji);
+      setShowReactionPicker(false);
+    },
+    [sendReaction]
+  );
+
+  // Release the screen capture if the component unmounts mid-share.
+  useEffect(() => {
+    return () => {
+      screenStreamRef.current?.getTracks().forEach((track) => track.stop());
+      screenStreamRef.current = null;
+    };
   }, []);
 
-  useEffect(() => {
-    socket.on("user:joined", handleUserJoined);
-    socket.on("incomming:call", handleIncommingCall);
-    socket.on("call:accepted", handleCallAccepted);
-    socket.on("peer:nego:needed", handleNegoNeedIncomming);
-    socket.on("peer:nego:final", handleNegoNeedFinal);
+  if (joinState === "error") {
+    return (
+      <div className="room-blocked">
+        <div className="room-blocked-card">
+          <h1>Can't join this room</h1>
+          <p>{joinError}</p>
+          <button onClick={() => navigate("/")} className="room-blocked-btn">
+            Back to dashboard
+          </button>
+        </div>
+      </div>
+    );
+  }
 
-    return () => {
-      socket.off("user:joined", handleUserJoined);
-      socket.off("incomming:call", handleIncommingCall);
-      socket.off("call:accepted", handleCallAccepted);
-      socket.off("peer:nego:needed", handleNegoNeedIncomming);
-      socket.off("peer:nego:final", handleNegoNeedFinal);
-    };
-  }, [
-    socket,
-    handleUserJoined,
-    handleIncommingCall,
-    handleCallAccepted,
-    handleNegoNeedIncomming,
-    handleNegoNeedFinal,
-  ]);
-
-  // Initialize: Add myself as participant
-  useEffect(() => {
-    if (!socket || !socket.id) return;
-    const myEmailFromStorage = localStorage.getItem("zenith_user_email") || "You";
-    setMyEmail(myEmailFromStorage);
-    setParticipants([{ id: socket.id, email: myEmailFromStorage, isHost: true }]);
-  }, [socket]);
-
-  // Auto send streams when call is accepted
-  useEffect(() => {
-    if (callStarted && myStream && !isScreenSharing) {
-      const timer = setTimeout(() => {
-        sendStreams();
-      }, 1000);
-      return () => clearTimeout(timer);
-    }
-  }, [callStarted, myStream, sendStreams, isScreenSharing]);
-
-  // Toggle Audio
-  const toggleAudio = () => {
-    if (myStream) {
-      const audioTrack = myStream.getAudioTracks()[0];
-      if (audioTrack) {
-        audioTrack.enabled = !audioTrack.enabled;
-        setIsAudioMuted(!audioTrack.enabled);
-      }
-    }
-  };
-
-  // Toggle Video
-  const toggleVideo = () => {
-    if (myStream) {
-      const videoTrack = myStream.getVideoTracks()[0];
-      if (videoTrack) {
-        videoTrack.enabled = !videoTrack.enabled;
-        setIsVideoOff(!videoTrack.enabled);
-      }
-    }
-  };
-
-  // Screen Share
-  const toggleScreenShare = async () => {
-    if (!isScreenSharing) {
-      try {
-        const screenStream = await navigator.mediaDevices.getDisplayMedia({
-          video: true,
-        });
-        
-        const screenTrack = screenStream.getVideoTracks()[0];
-        const sender = peer.peer
-          .getSenders()
-          .find((s) => s.track && s.track.kind === "video");
-        
-        if (sender) {
-          const currentVideoTrack = myStream.getVideoTracks()[0];
-          if (currentVideoTrack && !originalVideoTrackRef.current) {
-            originalVideoTrackRef.current = currentVideoTrack;
-          }
-          
-          await sender.replaceTrack(screenTrack);
-        }
-        
-        setIsScreenSharing(true);
-        
-        screenTrack.onended = async () => {
-          if (originalVideoTrackRef.current) {
-            const sender = peer.peer
-              .getSenders()
-              .find((s) => s.track && s.track.kind === "video");
-            if (sender) {
-              await sender.replaceTrack(originalVideoTrackRef.current);
-            }
-          }
-          setIsScreenSharing(false);
-        };
-      } catch (error) {
-        console.error("Error sharing screen:", error);
-        setError("Failed to share screen. Please try again.");
-      }
-    } else {
-      if (originalVideoTrackRef.current) {
-        const sender = peer.peer
-          .getSenders()
-          .find((s) => s.track && s.track.kind === "video");
-        if (sender) {
-          await sender.replaceTrack(originalVideoTrackRef.current);
-        }
-      }
-      setIsScreenSharing(false);
-    }
-  };
-
-  // End Call
-  const endCall = () => {
-    if (myStream) {
-      myStream.getTracks().forEach((track) => track.stop());
-    }
-    
-    if (peer.peer) {
-      peer.closePeer();
-    }
-    
-    originalVideoTrackRef.current = null;
-    window.location.href = "/";
-  };
-
-  // Copy Room Link
-  const copyRoomLink = () => {
-    const roomLink = window.location.href;
-    navigator.clipboard.writeText(roomLink).then(() => {
-      // Show toast instead of alert
-      const toast = document.createElement('div');
-      toast.className = 'room-toast';
-      toast.textContent = 'Room link copied!';
-      document.body.appendChild(toast);
-      setTimeout(() => toast.remove(), 2000);
-    }).catch((err) => {
-      console.error("Failed to copy:", err);
-    });
-  };
-
-  // Panel Management
-  const togglePanel = (panelName) => {
-    if (activePanel === panelName) {
-      setActivePanel(null);
-    } else {
-      setActivePanel(panelName);
-    }
-  };
-
-  // Reactions
-  const reactions = ['👍', '❤️', '😂', '😮', '😢', '👏', '🎉', '🔥'];
-  
-  const handleReaction = (emoji) => {
-    setReaction(emoji);
-    setShowReactionsPicker(false);
-    
-    // Clear previous timeout
-    if (reactionTimeoutRef.current) {
-      clearTimeout(reactionTimeoutRef.current);
-    }
-    
-    // Hide reaction after 3 seconds
-    reactionTimeoutRef.current = setTimeout(() => {
-      setReaction(null);
-    }, 3000);
-  };
-
-  // Determine video layout
-  const showMainVideo = remoteStream ? remoteStream : (myStream && !remoteStream ? myStream : null);
-  const showPipVideo = remoteStream && myStream ? myStream : null;
-  const remoteParticipantName =
-    remoteDisplayName ||
-    (participants.find((p) => p.id === remoteSocketId)?.email) ||
-    "Remote User";
-
-  // Attach streams to video elements
-  useEffect(() => {
-    if (!mainVideoRef.current) return;
-
-    if (showMainVideo) {
-      mainVideoRef.current.srcObject = showMainVideo;
-      mainVideoRef.current
-        .play()
-        .catch((err) => console.error("Error playing main video:", err));
-    } else {
-      mainVideoRef.current.srcObject = null;
-    }
-  }, [showMainVideo]);
-
-  useEffect(() => {
-    if (!pipVideoRef.current) return;
-
-    if (showPipVideo) {
-      pipVideoRef.current.srcObject = showPipVideo;
-      pipVideoRef.current
-        .play()
-        .catch((err) => console.error("Error playing PIP video:", err));
-    } else {
-      pipVideoRef.current.srcObject = null;
-    }
-  }, [showPipVideo]);
-
-  // ICE candidate handling
-  useEffect(() => {
-    if (!socket || !peer.peer) return;
-
-    const handleIceCandidate = (event) => {
-      if (event.candidate && remoteSocketId) {
-        socket.emit("ice:candidate", {
-          to: remoteSocketId,
-          candidate: event.candidate,
-        });
-      }
-    };
-
-    const handleRemoteIceCandidate = async ({ from, candidate }) => {
-      try {
-        await peer.addIceCandidate(candidate);
-      } catch (err) {
-        console.error("Error adding received ICE candidate:", err);
-      }
-    };
-
-    peer.peer.addEventListener("icecandidate", handleIceCandidate);
-    socket.on("ice:candidate", handleRemoteIceCandidate);
-
-    return () => {
-      if (peer.peer) {
-        peer.peer.removeEventListener("icecandidate", handleIceCandidate);
-      }
-      socket.off("ice:candidate", handleRemoteIceCandidate);
-    };
-  }, [socket, remoteSocketId]);
+  const tileCount = peers.length + 1;
+  const selfEntry = roster.find((p) => p.participantId === selfId);
 
   return (
     <div className="room-container">
-      {/* Error Message */}
-      {error && (
-        <div className="room-error-message">
-          {error}
+      <header className="room-header">
+        <div className="room-header-left">
+          <span className="room-code">{roomId}</span>
+          <button onClick={copyInviteLink} className="room-copy-btn">
+            Copy invite
+          </button>
+        </div>
+
+        <div className="room-header-right">
+          {!stream && (
+            <span className="room-connection-warning">
+              <span className="room-connection-dot" />
+              No camera or mic — others can't see or hear you
+            </span>
+          )}
+          {socketStatus !== "connected" && (
+            <span className="room-connection-warning">
+              <span className="room-connection-dot" />
+              Reconnecting to the room…
+            </span>
+          )}
+          <span className="room-clock">
+            {new Date().toLocaleTimeString([], {
+              hour: "2-digit",
+              minute: "2-digit",
+            })}
+          </span>
+        </div>
+      </header>
+
+      {/* Reactions float over the grid and expire on their own. */}
+      {reactions.length > 0 && (
+        <div className="room-reactions" aria-live="polite">
+          {reactions.map((r) => (
+            <div key={r.id} className="room-reaction">
+              <span className="room-reaction-emoji">{r.emoji}</span>
+              <span className="room-reaction-name">{r.name}</span>
+            </div>
+          ))}
         </div>
       )}
 
-      {/* Reaction Display */}
-      {reaction && (
-        <div className="reaction-display">
-          <span className="reaction-emoji">{reaction}</span>
-        </div>
-      )}
+      {toast && <div className="room-toast">{toast}</div>}
 
-      {/* Video Grid */}
-      <div className="video-grid">
-        {/* Main Video - Remote or Host */}
-        {showMainVideo && (
-          <div className="video-container main-video">
-            <video
-              ref={mainVideoRef}
-              className="video-player"
-              autoPlay
-              playsInline
-              muted={!remoteStream}
+      <main className={`room-main${activePanel ? " with-panel" : ""}`}>
+        <div className="video-grid" data-count={tileCount}>
+          <VideoTile
+            stream={screenStream || stream}
+            name={displayName}
+            isLocal
+            isHost={hostId === selfId}
+            audioEnabled={!isAudioMuted}
+            videoEnabled={isScreenSharing || !isVideoOff}
+            isScreenSharing={isScreenSharing}
+          />
+
+          {peers.map((peer) => (
+            <VideoTile
+              key={peer.id}
+              stream={peer.stream}
+              name={peer.name}
+              isHost={hostId === peer.id}
+              audioEnabled={peer.audioEnabled}
+              videoEnabled={peer.videoEnabled}
+              connectionState={peer.state}
+              debugState={peer.debugState}
             />
-            <div className="video-label">
-              {remoteStream ? remoteParticipantName : "You"}
-            </div>
-            {remoteStream && (
-              <div className="video-mute-indicator">
-                {isAudioMuted && (
-                  <svg className="icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z" />
-                  </svg>
-                )}
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* PIP Video - Self view when remote is present */}
-        {showPipVideo && (
-          <div className="video-container pip-video">
-            <video
-              ref={pipVideoRef}
-              className="video-player"
-              autoPlay
-              playsInline
-              muted
-            />
-            <div className="video-label">
-              You {isVideoOff && "(Camera Off)"} {isScreenSharing && "(Sharing Screen)"}
-            </div>
-            {isAudioMuted && (
-              <div className="video-mute-indicator">
-                <svg className="icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z" />
-                </svg>
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* Waiting State */}
-        {!myStream && !remoteStream && (
-          <div className="waiting-state">
-            <div className="waiting-content">
-              <svg className="waiting-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
-              </svg>
-              <h2>Ready to Connect</h2>
-              <p>Click "Start Call" when someone joins the room</p>
-            </div>
-          </div>
-        )}
-      </div>
-
-      {/* Admit/Deny Modal for Host */}
-      {isHost && pendingAdmissions.length > 0 && (
-        <div className="admit-modal-overlay">
-          <div className="admit-modal">
-            <div className="admit-modal-header">
-              <h3>Waiting to be admitted</h3>
-              <span className="admit-count">{pendingAdmissions.length}</span>
-            </div>
-            <div className="admit-list">
-              {pendingAdmissions.map((pending) => (
-                <div key={pending.id} className="admit-item">
-                  <div className="admit-user-info">
-                    <div className="admit-avatar">{pending.email.charAt(0).toUpperCase()}</div>
-                    <div className="admit-name">{pending.email}</div>
-                  </div>
-                  <div className="admit-actions">
-                    <button
-                      onClick={() => denyParticipant(pending.id)}
-                      className="admit-btn deny-btn"
-                    >
-                      Deny
-                    </button>
-                    <button
-                      onClick={() => admitParticipant(pending.id, pending.email)}
-                      className="admit-btn accept-btn"
-                    >
-                      Admit
-                    </button>
-                  </div>
-                </div>
-              ))}
-            </div>
-            <div className="admit-modal-footer">
-              <button
-                onClick={() => {
-                  pendingAdmissions.forEach(p => admitParticipant(p.id, p.email));
-                }}
-                className="admit-all-btn"
-              >
-                Admit all
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Controls */}
-      <div className="controls-container">
-        <div className="controls-left">
-          <div className="meeting-info-text">
-            {new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} | {roomId}
-          </div>
+          ))}
         </div>
 
-        <div className="controls-center">
-          {remoteSocketId && !callStarted && (
-            <button onClick={handleCallUser} className="control-btn start-call">
-              <svg className="icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.949V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z" />
-              </svg>
-              Start Call
+        {peers.length === 0 && joinState === "joined" && (
+          <div className="room-empty-hint">
+            <p>You're the only one here.</p>
+            <button onClick={copyInviteLink} className="room-empty-btn">
+              Copy the invite link
             </button>
-          )}
+          </div>
+        )}
 
-          {myStream && (
-            <>
+        {activePanel && (
+          <aside className="room-panel">
+            <div className="room-panel-header">
+              <h2>
+                {activePanel === "chat" && "Chat"}
+                {activePanel === "people" && `People (${roster.length})`}
+                {activePanel === "info" && "Meeting details"}
+              </h2>
               <button
-                onClick={toggleAudio}
-                className={`control-btn ${isAudioMuted ? "danger" : ""}`}
-                title={isAudioMuted ? "Unmute" : "Mute"}
+                onClick={() => setActivePanel(null)}
+                className="room-panel-close"
+                aria-label="Close panel"
               >
-                {isAudioMuted ? (
-                  <svg className="icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z" />
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2" />
-                  </svg>
-                ) : (
-                  <svg className="icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" />
-                  </svg>
-                )}
-              </button>
-
-              <button
-                onClick={toggleVideo}
-                className={`control-btn ${isVideoOff ? "danger" : ""}`}
-                title={isVideoOff ? "Turn On Camera" : "Turn Off Camera"}
-              >
-                {isVideoOff ? (
-                  <svg className="icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 3l18 18" />
-                  </svg>
-                ) : (
-                  <svg className="icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
-                  </svg>
-                )}
-              </button>
-
-              <button
-                onClick={toggleScreenShare}
-                className={`control-btn ${isScreenSharing ? "active" : ""}`}
-                title={isScreenSharing ? "Stop Sharing" : "Share Screen"}
-              >
-                <svg className="icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M6 18L18 6M6 6l12 12"
+                  />
                 </svg>
               </button>
+            </div>
 
-              {/* Reactions Button */}
-              <div className="reactions-container">
-                <button
-                  onClick={() => setShowReactionsPicker(!showReactionsPicker)}
-                  className="control-btn"
-                  title="Reactions"
-                >
-                  <svg className="icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14.828 14.828a4 4 0 01-5.656 0M9 10h.01M15 10h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                  </svg>
-                </button>
-                {showReactionsPicker && (
-                  <div className="reactions-picker">
-                    {reactions.map((emoji, idx) => (
-                      <button
-                        key={idx}
-                        onClick={() => handleReaction(emoji)}
-                        className="reaction-btn"
-                      >
-                        {emoji}
-                      </button>
-                    ))}
-                  </div>
-                )}
+            <div className="room-panel-body">
+              {activePanel === "chat" && (
+                <Chat messages={messages} onSend={sendMessage} />
+              )}
+
+              {activePanel === "people" && (
+                <ul className="room-people">
+                  {roster.map((person) => (
+                    <li key={person.participantId} className="room-person">
+                      <span className="room-person-avatar">
+                        {person.name.charAt(0).toUpperCase()}
+                      </span>
+                      <span className="room-person-name">
+                        {person.name}
+                        {person.participantId === selfId && " (You)"}
+                      </span>
+                      {hostId === person.participantId && (
+                        <span className="room-person-badge">Host</span>
+                      )}
+                    </li>
+                  ))}
+                </ul>
+              )}
+
+              {activePanel === "info" && (
+                <div className="room-info">
+                  <label htmlFor="room-info-code">Meeting code</label>
+                  <input id="room-info-code" value={roomId} readOnly />
+
+                  <label htmlFor="room-info-link">Invite link</label>
+                  <input
+                    id="room-info-link"
+                    value={`${window.location.origin}/preview/${roomId}`}
+                    readOnly
+                  />
+
+                  <button onClick={copyInviteLink} className="room-info-copy">
+                    Copy invite link
+                  </button>
+
+                  <p className="room-info-note">
+                    Audio and video travel directly between participants. The
+                    server only relays the messages needed to set up each
+                    connection.
+                  </p>
+                  {selfEntry && (
+                    <p className="room-info-note">
+                      Rooms hold up to 5 people. Currently {roster.length}.
+                    </p>
+                  )}
+                </div>
+              )}
+            </div>
+          </aside>
+        )}
+      </main>
+
+      <footer className="room-controls">
+        <div className="room-controls-group">
+          <button
+            onClick={toggleAudio}
+            disabled={!stream}
+            className={`room-btn${isAudioMuted ? " danger" : ""}`}
+            title={isAudioMuted ? "Unmute" : "Mute"}
+            aria-pressed={isAudioMuted}
+          >
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor">
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d="M19 11a7 7 0 01-14 0m7 7v4m0-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z"
+              />
+              {isAudioMuted && (
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M3 3l18 18"
+                />
+              )}
+            </svg>
+            <span className="room-btn-label">
+              {isAudioMuted ? "Unmute" : "Mute"}
+            </span>
+          </button>
+
+          <button
+            onClick={toggleVideo}
+            disabled={!stream}
+            className={`room-btn${isVideoOff ? " danger" : ""}`}
+            title={isVideoOff ? "Turn camera on" : "Turn camera off"}
+            aria-pressed={isVideoOff}
+          >
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor">
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z"
+              />
+              {isVideoOff && (
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M3 3l18 18"
+                />
+              )}
+            </svg>
+            <span className="room-btn-label">
+              {isVideoOff ? "Start video" : "Stop video"}
+            </span>
+          </button>
+
+          <button
+            onClick={toggleScreenShare}
+            className={`room-btn${isScreenSharing ? " active" : ""}`}
+            title={isScreenSharing ? "Stop presenting" : "Present screen"}
+            aria-pressed={isScreenSharing}
+          >
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor">
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"
+              />
+            </svg>
+            <span className="room-btn-label">
+              {isScreenSharing ? "Stop" : "Present"}
+            </span>
+          </button>
+
+          <div className="room-reaction-wrapper">
+            <button
+              onClick={() => setShowReactionPicker((v) => !v)}
+              className={`room-btn${showReactionPicker ? " active" : ""}`}
+              title="React"
+              aria-expanded={showReactionPicker}
+            >
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M14.828 14.828a4 4 0 01-5.656 0M9 10h.01M15 10h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
+                />
+              </svg>
+              <span className="room-btn-label">React</span>
+            </button>
+
+            {showReactionPicker && (
+              <div className="room-reaction-picker">
+                {REACTIONS.map((emoji) => (
+                  <button
+                    key={emoji}
+                    onClick={() => handleReaction(emoji)}
+                    className="room-reaction-option"
+                    aria-label={`React with ${emoji}`}
+                  >
+                    {emoji}
+                  </button>
+                ))}
               </div>
+            )}
+          </div>
 
-              <button onClick={endCall} className="control-btn end-call" title="End Call">
-                <svg className="icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 8l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2M5 3a2 2 0 00-2 2v1c0 8.284 6.716 15 15 15h1a2 2 0 002-2v-3.28a1 1 0 00-.684-.948l-4.493-1.498a1 1 0 00-1.21.502l-1.13 2.257a11.042 11.042 0 01-5.516-5.517l2.257-1.128a1 1 0 00.502-1.21L9.228 3.683A1 1 0 008.279 3H5z" />
-                </svg>
-              </button>
-            </>
-          )}
+          <button onClick={handleLeave} className="room-btn leave" title="Leave">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor">
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1"
+              />
+            </svg>
+            <span className="room-btn-label">Leave</span>
+          </button>
         </div>
 
-        <div className="controls-right">
+        <div className="room-controls-group secondary">
           <button
-            onClick={() => togglePanel('info')}
-            className={`control-btn action-btn ${activePanel === 'info' ? 'active' : ''}`}
-            title="Meeting information"
+            onClick={() =>
+              setActivePanel((p) => (p === "info" ? null : "info"))
+            }
+            className={`room-btn ghost${activePanel === "info" ? " active" : ""}`}
+            title="Meeting details"
           >
-            <svg className="icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor">
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
+              />
             </svg>
           </button>
+
           <button
-            onClick={() => togglePanel('chat')}
-            className={`control-btn action-btn ${activePanel === 'chat' ? 'active' : ''}`}
-            title="Chat"
-          >
-            <svg className="icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
-            </svg>
-          </button>
-          <button
-            onClick={() => togglePanel('participants')}
-            className={`control-btn action-btn ${activePanel === 'participants' ? 'active' : ''}`}
+            onClick={() =>
+              setActivePanel((p) => (p === "people" ? null : "people"))
+            }
+            className={`room-btn ghost${
+              activePanel === "people" ? " active" : ""
+            }`}
             title="People"
           >
-            <svg className="icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z" />
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor">
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d="M17 20h5v-1a4 4 0 00-3-3.87M9 20H4v-1a4 4 0 013-3.87m10-4.13a4 4 0 10-8 0 4 4 0 008 0z"
+              />
             </svg>
+            <span className="room-btn-count">{roster.length}</span>
+          </button>
+
+          <button
+            onClick={() =>
+              setActivePanel((p) => (p === "chat" ? null : "chat"))
+            }
+            className={`room-btn ghost${activePanel === "chat" ? " active" : ""}`}
+            title="Chat"
+          >
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor">
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"
+              />
+            </svg>
+            {unreadCount > 0 && (
+              <span className="room-btn-badge">{unreadCount}</span>
+            )}
           </button>
         </div>
-      </div>
-
-      {/* Right Side Panel */}
-      {activePanel && (
-        <div className={`side-panel ${activePanel}`}>
-          <div className="side-panel-header">
-            <h3>
-              {activePanel === 'info' && 'Meeting information'}
-              {activePanel === 'chat' && 'Chat'}
-              {activePanel === 'participants' && 'People'}
-            </h3>
-            <button onClick={() => setActivePanel(null)} className="side-panel-close">
-              <svg className="icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-              </svg>
-            </button>
-          </div>
-
-          <div className="side-panel-content">
-            {activePanel === 'info' && (
-              <div className="info-panel">
-                <div className="info-section">
-                  <label>Meeting code</label>
-                  <div className="room-code-display">
-                    <input
-                      type="text"
-                      value={roomId}
-                      readOnly
-                      className="room-code-input"
-                    />
-                    <button onClick={copyRoomLink} className="copy-code-btn">
-                      <svg className="icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
-                      </svg>
-                    </button>
-                  </div>
-                </div>
-                <div className="info-section">
-                  <label>Meeting link</label>
-                  <div className="room-link-display">
-                    <input
-                      type="text"
-                      value={window.location.href}
-                      readOnly
-                      className="room-link-input"
-                    />
-                    <button onClick={copyRoomLink} className="copy-link-btn-small">
-                      Copy
-                    </button>
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {activePanel === 'chat' && (
-              <Chat 
-                socket={socket} 
-                remoteSocketId={remoteSocketId} 
-                myEmail={myEmail}
-                isInPanel={true}
-              />
-            )}
-
-            {activePanel === 'participants' && (
-              <div className="participants-panel">
-                <div className="participants-section">
-                  <h4>In the meeting ({participants.length})</h4>
-                  <div className="participants-list">
-                    {participants.map((participant) => (
-                      <div key={participant.id} className="participant-item">
-                        <div className="participant-avatar">
-                          {participant.email.charAt(0).toUpperCase()}
-                        </div>
-                        <div className="participant-info">
-                          <div className="participant-name">
-                            {participant.email}
-                            {participant.isHost && <span className="host-badge">Host</span>}
-                          </div>
-                        </div>
-                        {socket && socket.id && participant.id === socket.id && (
-                          <span className="participant-you">(You)</span>
-                        )}
-                      </div>
-                    ))}
-                  </div>
-                </div>
-                {pendingAdmissions.length > 0 && isHost && (
-                  <div className="participants-section">
-                    <h4>Waiting to be admitted ({pendingAdmissions.length})</h4>
-                    <div className="participants-list">
-                      {pendingAdmissions.map((pending) => (
-                        <div key={pending.id} className="participant-item waiting">
-                          <div className="participant-avatar">
-                            {pending.email.charAt(0).toUpperCase()}
-                          </div>
-                          <div className="participant-info">
-                            <div className="participant-name">{pending.email}</div>
-                          </div>
-                          <div className="participant-actions">
-                            <button
-                              onClick={() => denyParticipant(pending.id)}
-                              className="participant-btn deny"
-                            >
-                              Deny
-                            </button>
-                            <button
-                              onClick={() => admitParticipant(pending.id, pending.email)}
-                              className="participant-btn admit"
-                            >
-                              Admit
-                            </button>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
-              </div>
-            )}
-          </div>
-        </div>
-      )}
+      </footer>
     </div>
   );
 };

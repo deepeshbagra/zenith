@@ -1,334 +1,186 @@
 import React, { useState } from "react";
+import { MAX_PARTICIPANTS } from "../service/MeshSession";
+import { hasTurnConfigured } from "../service/iceServers";
 import "./Support.css";
+
+/**
+ * Help page.
+ *
+ * Everything here describes what the app actually does. The previous version
+ * advertised meeting recording, paid plans with 50-participant rooms, a Slack
+ * integration, a support phone number and a 24/7 live chat — none of which
+ * exist. A help page that documents imaginary features is worse than no help
+ * page, because it is the one place a confused person goes to be told the truth.
+ */
+
+const TROUBLESHOOTING = [
+  {
+    icon: "🎥",
+    title: "Camera or mic won't start",
+    body: "Check the camera icon in your browser's address bar and allow access, then press Try again. If it still fails, another app may be holding the camera — close Zoom, Teams or Photo Booth and reload.",
+  },
+  {
+    icon: "🔌",
+    title: "The other person never connects",
+    body: "The call needs a network path between the two of you. On restrictive networks (many offices, some mobile carriers) that path only exists via a TURN server. If one isn't configured, the tile stays on \"Connecting\" indefinitely.",
+  },
+  {
+    icon: "🔇",
+    title: "You can't hear someone",
+    body: "Check whether their tile shows the muted icon — that means they muted themselves. If not, check your own system output device and volume, then have them toggle their mic off and on.",
+  },
+  {
+    icon: "🚪",
+    title: "\"This room is full\"",
+    body: `Rooms hold ${MAX_PARTICIPANTS} people. Someone has to leave before another person can join, or you can start a second room.`,
+  },
+];
+
+const FAQS = [
+  {
+    id: "capacity",
+    question: "How many people can join one meeting?",
+    answer: `Up to ${MAX_PARTICIPANTS}. Everyone connects directly to everyone else rather than through a media server, so each person's upload bandwidth has to carry one copy of their video per participant. That's what sets the limit — going higher would need a media server that receives each stream once and redistributes it.`,
+  },
+  {
+    id: "invite",
+    question: "How do I invite someone?",
+    answer: "Open the meeting details panel during a call, or use Copy invite in the header, and send them the link. They don't need an account — they'll be asked for a display name and can join straight away.",
+  },
+  {
+    id: "account",
+    question: "Do I need an account?",
+    answer: "Only to start your own meeting and to keep a record of meetings you've joined. Joining someone else's invite link never requires one.",
+  },
+  {
+    id: "privacy",
+    question: "Who can see my video?",
+    answer: "Only the other people in the room. Audio and video travel directly between browsers and are encrypted in transit by WebRTC. The server only relays the small messages needed to set up each connection — it never receives, stores or forwards your media.",
+  },
+  {
+    id: "room-access",
+    question: "Can someone else join my room?",
+    answer: "Yes, if they have the room code. Rooms are not restricted to invited people, so treat a room code like a password and only share it with people you want in the call.",
+  },
+  {
+    id: "history-storage",
+    question: "Where is my meeting history stored?",
+    answer: "In this browser, on this device. It isn't sent to a server, which means it won't follow you to another browser or another computer, and clearing your site data erases it.",
+  },
+  {
+    id: "accounts-storage",
+    question: "How are accounts stored?",
+    answer: "Also in this browser. Your password itself is never saved — only a salted PBKDF2 hash of it, which is checked when you sign in. Because there's no server involved, this isn't real account security: anyone with access to this computer's browser profile could clear or inspect that data. Please don't reuse a password you use elsewhere.",
+  },
+  {
+    id: "screen-share",
+    question: "How do I share my screen?",
+    answer: "Press Present in the call controls and pick a screen, window or tab. Your camera is restored automatically when you stop sharing, whether you use the Present button or your browser's own stop-sharing bar.",
+  },
+  {
+    id: "recording",
+    question: "Can I record a meeting?",
+    answer: "No. There's no recording feature, and nothing about a call is saved after everyone leaves — only the room code and the time you joined it, and only if you're signed in.",
+  },
+  {
+    id: "reconnect",
+    question: "Why did it briefly say \"Reconnecting to the room\"?",
+    answer: "The signalling connection dropped and is being re-established. Video and audio keep flowing during this, because they go directly between participants rather than through the server. You only lose the ability to have someone new join until it reconnects.",
+  },
+  {
+    id: "browsers",
+    question: "Which browsers work?",
+    answer: "Recent Chrome, Edge, Firefox and Safari, on desktop and mobile. The camera also requires a secure connection, so the app must be served over HTTPS — or from localhost during development.",
+  },
+];
 
 const SupportPage = () => {
   const [expandedFaq, setExpandedFaq] = useState(null);
-  const [showTicketModal, setShowTicketModal] = useState(false);
-  const [ticketForm, setTicketForm] = useState({
-    subject: "",
-    category: "technical",
-    description: ""
-  });
 
-  // Help topics
-  const helpTopics = [
-    {
-      id: 1,
-      title: "Getting Started",
-      description: "Learn the basics of using Zenith",
-      icon: "📖",
-      color: "#3b82f6"
-    },
-    {
-      id: 2,
-      title: "Video Calls",
-      description: "Troubleshoot call issues",
-      icon: "🎥",
-      color: "#8b5cf6"
-    },
-    {
-      id: 3,
-      title: "Account Settings",
-      description: "Manage your account and preferences",
-      icon: "⚙️",
-      color: "#10b981"
-    },
-    {
-      id: 4,
-      title: "Billing",
-      description: "Questions about plans and payments",
-      icon: "💳",
-      color: "#f59e0b"
-    }
-  ];
-
-  // FAQs
-  const faqs = [
-    {
-      id: 1,
-      question: "How do I schedule a meeting?",
-      answer: 'Click the "Schedule Meeting" button in the header or go to the Meetings page to create a new meeting.'
-    },
-    {
-      id: 2,
-      question: "Can I record meetings?",
-      answer: "Yes, you can enable recording in the meeting settings or set up automatic recording in Automation."
-    },
-    {
-      id: 3,
-      question: "How many participants can join?",
-      answer: "The number of participants depends on your plan. Free plan supports up to 5 participants, Pro plan up to 50, and Enterprise has unlimited participants."
-    },
-    {
-      id: 4,
-      question: "How do I share my screen?",
-      answer: "During a meeting, click the screen share button in the bottom controls. You can share your entire screen or a specific window."
-    },
-    {
-      id: 5,
-      question: "Can I integrate with other tools?",
-      answer: "Yes! Visit the Integrations page to connect with Google Calendar, Slack, Zoom, Microsoft Teams, and many other services."
-    },
-    {
-      id: 6,
-      question: "Is my data secure?",
-      answer: "Absolutely. All calls are end-to-end encrypted, and we don't store any meeting content on our servers."
-    },
-    {
-      id: 7,
-      question: "How do I invite team members?",
-      answer: "Go to the Teams page and click 'Create Team' or use the 'Invite' button to send invitations via email."
-    },
-    {
-      id: 8,
-      question: "What browsers are supported?",
-      answer: "Zenith works best on the latest versions of Chrome, Firefox, Safari, and Edge. We recommend Chrome for the best experience."
-    }
-  ];
-
-  // Toggle FAQ
   const toggleFaq = (id) => {
     setExpandedFaq(expandedFaq === id ? null : id);
-  };
-
-  // Handle ticket form
-  const handleTicketChange = (e) => {
-    const { name, value } = e.target;
-    setTicketForm(prev => ({ ...prev, [name]: value }));
-  };
-
-  const handleSubmitTicket = (e) => {
-    e.preventDefault();
-    if (!ticketForm.subject || !ticketForm.description) {
-      alert("Please fill in all fields");
-      return;
-    }
-    alert("Support ticket submitted! We'll get back to you within 24 hours.");
-    setShowTicketModal(false);
-    setTicketForm({ subject: "", category: "technical", description: "" });
-  };
-
-  // Contact support
-  const handleContactSupport = () => {
-    setShowTicketModal(true);
-  };
-
-  const handleLearnMore = (topic) => {
-    alert(`Opening help documentation for: ${topic.title}\n\nThis will redirect to detailed guides and tutorials.`);
   };
 
   return (
     <div className="support-page">
       <div className="support-header">
         <div>
-          <h1 className="page-title">Support</h1>
-          <p className="page-subtitle">Get help and contact our support team</p>
-        </div>
-        <button onClick={handleContactSupport} className="btn-contact-support">
-          <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z" />
-          </svg>
-          Contact Support
-        </button>
-      </div>
-
-      {/* Quick Contact Methods */}
-      <div className="contact-methods">
-        <div className="contact-item">
-          <div className="contact-icon">📧</div>
-          <div className="contact-info">
-            <h3>Email Us</h3>
-            <p>support@zenith.com</p>
-          </div>
-        </div>
-        <div className="contact-item">
-          <div className="contact-icon">💬</div>
-          <div className="contact-info">
-            <h3>Live Chat</h3>
-            <p>Available 24/7</p>
-          </div>
-        </div>
-        <div className="contact-item">
-          <div className="contact-icon">📞</div>
-          <div className="contact-info">
-            <h3>Call Us</h3>
-            <p>+1 (555) 123-4567</p>
-          </div>
-        </div>
-        <div className="contact-item">
-          <div className="contact-icon">🌐</div>
-          <div className="contact-info">
-            <h3>Community</h3>
-            <p>Join our forum</p>
-          </div>
+          <h1 className="page-title">Help</h1>
+          <p className="page-subtitle">
+            How Zenith works, and what to do when something doesn't
+          </p>
         </div>
       </div>
 
-      {/* Help Topics */}
+      {/*
+        Shown only when TURN is unconfigured, because in that state connection
+        failures are expected rather than mysterious, and the person hitting one
+        deserves to know it's a configuration gap and not their network.
+      */}
+      {!hasTurnConfigured() && (
+        <div className="support-notice">
+          <strong>No TURN server is configured.</strong> Calls will work between
+          people on ordinary home networks, but will fail to connect when both
+          participants are behind a restrictive network. See the project README
+          for how to set one up.
+        </div>
+      )}
+
       <div className="help-topics-section">
-        <h2 className="section-title">Help Topics</h2>
+        <h2 className="section-title">Troubleshooting</h2>
         <div className="help-topics-grid">
-          {helpTopics.map(topic => (
-            <div key={topic.id} className="help-topic-card">
-              <div className="topic-icon" style={{ background: `${topic.color}15` }}>
+          {TROUBLESHOOTING.map((topic) => (
+            <div key={topic.title} className="help-topic-card">
+              <div className="topic-icon">
                 <span className="icon-emoji">{topic.icon}</span>
               </div>
               <h3 className="topic-title">{topic.title}</h3>
-              <p className="topic-description">{topic.description}</p>
-              <button 
-                onClick={() => handleLearnMore(topic)} 
-                className="btn-learn-more"
-              >
-                Learn More →
-              </button>
+              <p className="topic-description">{topic.body}</p>
             </div>
           ))}
         </div>
       </div>
 
-      {/* FAQ Section */}
       <div className="faq-section">
-        <h2 className="section-title">Frequently Asked Questions</h2>
-        <p className="section-subtitle">Quick answers to common questions</p>
+        <h2 className="section-title">Frequently asked questions</h2>
+        <p className="section-subtitle">
+          Short, accurate answers about what this app does and doesn't do
+        </p>
 
         <div className="faq-list">
-          {faqs.map(faq => (
-            <div key={faq.id} className={`faq-item ${expandedFaq === faq.id ? 'expanded' : ''}`}>
-              <button 
-                className="faq-question"
-                onClick={() => toggleFaq(faq.id)}
+          {FAQS.map((faq) => {
+            const isOpen = expandedFaq === faq.id;
+            return (
+              <div
+                key={faq.id}
+                className={`faq-item ${isOpen ? "expanded" : ""}`}
               >
-                <span>{faq.question}</span>
-                <svg 
-                  className={`faq-icon ${expandedFaq === faq.id ? 'rotated' : ''}`}
-                  fill="none" 
-                  stroke="currentColor" 
-                  viewBox="0 0 24 24"
+                <button
+                  className="faq-question"
+                  onClick={() => toggleFaq(faq.id)}
+                  aria-expanded={isOpen}
+                  aria-controls={`faq-answer-${faq.id}`}
                 >
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
-                </svg>
-              </button>
-              {expandedFaq === faq.id && (
-                <div className="faq-answer">
-                  {faq.answer}
-                </div>
-              )}
-            </div>
-          ))}
-        </div>
-      </div>
-
-      {/* Additional Resources */}
-      <div className="resources-section">
-        <h2 className="section-title">Additional Resources</h2>
-        <div className="resources-grid">
-          <div className="resource-card">
-            <svg className="resource-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253" />
-            </svg>
-            <h3>Documentation</h3>
-            <p>Complete guides and API docs</p>
-            <button className="btn-resource">View Docs</button>
-          </div>
-
-          <div className="resource-card">
-            <svg className="resource-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" />
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-            </svg>
-            <h3>Video Tutorials</h3>
-            <p>Step-by-step video guides</p>
-            <button className="btn-resource">Watch Videos</button>
-          </div>
-
-          <div className="resource-card">
-            <svg className="resource-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 20H5a2 2 0 01-2-2V6a2 2 0 012-2h10a2 2 0 012 2v1m2 13a2 2 0 01-2-2V7m2 13a2 2 0 002-2V9a2 2 0 00-2-2h-2m-4-3H9M7 16h6M7 8h6v4H7V8z" />
-            </svg>
-            <h3>Release Notes</h3>
-            <p>Latest features and updates</p>
-            <button className="btn-resource">Read More</button>
-          </div>
-        </div>
-      </div>
-
-      {/* Submit Ticket Modal */}
-      {showTicketModal && (
-        <div className="modal-overlay" onClick={() => setShowTicketModal(false)}>
-          <div className="modal-content ticket-modal" onClick={(e) => e.stopPropagation()}>
-            <div className="modal-header">
-              <h2>Submit Support Ticket</h2>
-              <button className="modal-close" onClick={() => setShowTicketModal(false)}>
-                <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                </svg>
-              </button>
-            </div>
-
-            <div className="modal-body">
-              <form onSubmit={handleSubmitTicket}>
-                <div className="form-group">
-                  <label>Subject *</label>
-                  <input
-                    type="text"
-                    name="subject"
-                    value={ticketForm.subject}
-                    onChange={handleTicketChange}
-                    placeholder="Brief description of your issue"
-                    className="form-input"
-                    required
-                  />
-                </div>
-
-                <div className="form-group">
-                  <label>Category *</label>
-                  <select
-                    name="category"
-                    value={ticketForm.category}
-                    onChange={handleTicketChange}
-                    className="form-input"
-                  >
-                    <option value="technical">Technical Issue</option>
-                    <option value="billing">Billing Question</option>
-                    <option value="feature">Feature Request</option>
-                    <option value="account">Account Help</option>
-                    <option value="other">Other</option>
-                  </select>
-                </div>
-
-                <div className="form-group">
-                  <label>Description *</label>
-                  <textarea
-                    name="description"
-                    value={ticketForm.description}
-                    onChange={handleTicketChange}
-                    placeholder="Please provide details about your issue..."
-                    className="form-textarea"
-                    rows="5"
-                    required
-                  />
-                </div>
-
-                <div className="ticket-info">
+                  <span>{faq.question}</span>
                   <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth={2}
+                      d="M19 9l-7 7-7-7"
+                    />
                   </svg>
-                  <p>We typically respond within 24 hours. For urgent issues, please use live chat.</p>
-                </div>
-
-                <div className="modal-footer">
-                  <button type="button" onClick={() => setShowTicketModal(false)} className="btn-cancel">
-                    Cancel
-                  </button>
-                  <button type="submit" className="btn-submit-ticket">
-                    Submit Ticket
-                  </button>
-                </div>
-              </form>
-            </div>
-          </div>
+                </button>
+                {isOpen && (
+                  <div className="faq-answer" id={`faq-answer-${faq.id}`}>
+                    <p>{faq.answer}</p>
+                  </div>
+                )}
+              </div>
+            );
+          })}
         </div>
-      )}
+      </div>
     </div>
   );
 };

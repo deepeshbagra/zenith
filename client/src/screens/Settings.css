@@ -55,10 +55,7 @@
   margin: 0 0 clamp(0.375rem, 0.5vw, 0.5rem) 0;
   letter-spacing: -0.5px;
   line-height: 1.2;
-  background: linear-gradient(135deg, #ffffff 0%, rgba(255, 255, 255, 0.8) 100%);
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
-  background-clip: text;
+  color: var(--text-primary);
 }
 
 .settings-page-subtitle {
@@ -332,8 +329,8 @@
 }
 
 .settings-select option {
-  background: #000;
-  color: white;
+  background: var(--surface-2);
+  color: var(--text-primary);
   padding: 8px;
 }
 
@@ -612,7 +609,7 @@
   gap: clamp(0.4rem, 0.5vw, 0.5rem);
   white-space: nowrap;
   background: rgba(239, 68, 68, 0.2);
-  color: #fecaca;
+  color: var(--danger);
   border: 1px solid rgba(239, 68, 68, 0.4);
 }
 
@@ -667,7 +664,7 @@
 .danger-zone-title {
   font-size: 1.2rem;
   font-weight: 700;
-  color: #fecaca;
+  color: var(--danger);
   margin: 0 0 1.5rem 0;
 }
 

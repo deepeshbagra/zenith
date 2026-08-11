@@ -1,19 +1,27 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback } from "react";
+import { useAuth } from "../context/AuthProvider";
+import { getDisplayName, setDisplayName } from "../service/identity";
 import "./Settings.css";
 
 // This is the Settings content component that can be embedded in Dashboard
 const SettingsContent = () => {
+  const { user } = useAuth();
   const [activeSection, setActiveSection] = useState("profile");
-  const [isDarkMode, setIsDarkMode] = useState(true);
 
-  // Profile state
-  const [profileData, setProfileData] = useState({
-    fullName: "keshavagarwal9335",
-    email: "keshavagarwal9335@gmail.com",
-    bio: "",
-    company: "",
-    location: ""
-  });
+  // Defaults come from the signed-in account rather than being hardcoded, so
+  // the profile shows who is actually using the app.
+  const defaultProfile = useCallback(
+    () => ({
+      fullName: getDisplayName() || user?.email?.split("@")[0] || "",
+      email: user?.email || "",
+      bio: "",
+      company: "",
+      location: ""
+    }),
+    [user]
+  );
+
+  const [profileData, setProfileData] = useState(defaultProfile);
 
   // Notifications state
   const [notifications, setNotifications] = useState({
@@ -40,17 +48,10 @@ const SettingsContent = () => {
 
   // Load saved preferences from localStorage
   useEffect(() => {
-    // Load theme
-    const savedTheme = localStorage.getItem("zenith_theme");
-    if (savedTheme) {
-      const isDark = savedTheme === "dark";
-      setIsDarkMode(isDark);
-      setAppearance(prev => ({ ...prev, theme: savedTheme }));
-      document.documentElement.setAttribute("data-theme", savedTheme);
-    } else {
-      // Ensure a default theme attribute is set
-      document.documentElement.setAttribute("data-theme", appearance.theme);
-    }
+    // Load theme, falling back to the dark default.
+    const savedTheme = localStorage.getItem("zenith_theme") || "dark";
+    setAppearance(prev => ({ ...prev, theme: savedTheme }));
+    document.documentElement.setAttribute("data-theme", savedTheme);
 
     // Load profile
     const savedProfile = localStorage.getItem("zenith_profile");
@@ -85,23 +86,18 @@ const SettingsContent = () => {
   // Handle profile save
   const handleProfileSave = () => {
     localStorage.setItem("zenith_profile", JSON.stringify(profileData));
+    // Keep the name shown in calls in step with the profile, otherwise saving a
+    // new name here has no visible effect anywhere that matters.
+    if (profileData.fullName.trim()) {
+      setDisplayName(profileData.fullName.trim());
+    }
     alert("Profile updated successfully!");
   };
 
   // Handle profile cancel
   const handleProfileCancel = () => {
     const saved = localStorage.getItem("zenith_profile");
-    if (saved) {
-      setProfileData(JSON.parse(saved));
-    } else {
-      setProfileData({
-        fullName: "keshavagarwal9335",
-        email: "keshavagarwal9335@gmail.com",
-        bio: "",
-        company: "",
-        location: ""
-      });
-    }
+    setProfileData(saved ? JSON.parse(saved) : defaultProfile());
   };
 
   // Handle notification toggle
@@ -119,7 +115,6 @@ const SettingsContent = () => {
   // Handle appearance theme change
   const handleThemeChange = (theme) => {
     setAppearance(prev => ({ ...prev, theme }));
-    setIsDarkMode(theme === "dark");
     // Apply theme globally via data-theme attribute for CSS tokens
     document.documentElement.setAttribute("data-theme", theme);
     localStorage.setItem("zenith_theme", theme);
@@ -221,7 +216,9 @@ const SettingsContent = () => {
                   className="profile-photo"
                 />
               ) : (
-                <span>KE</span>
+                <span>
+                  {(profileData.fullName || "?").slice(0, 2).toUpperCase()}
+                </span>
               )}
             </div>
             <button className="btn-upload-photo" onClick={handlePhotoUpload}>

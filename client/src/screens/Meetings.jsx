@@ -1,5 +1,7 @@
 import React, { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
+import { generateRoomCode } from "../service/roomCode";
+import { MAX_PARTICIPANTS } from "../service/MeshSession";
 import "./Meetings.css";
 
 const MeetingsPage = () => {
@@ -33,11 +35,6 @@ const MeetingsPage = () => {
   const saveMeetings = (updatedMeetings) => {
     localStorage.setItem("zenith_meetings", JSON.stringify(updatedMeetings));
     setMeetings(updatedMeetings);
-  };
-
-  // Generate room code
-  const generateRoomCode = () => {
-    return Math.random().toString(36).substr(2, 9);
   };
 
   // Calendar functions
@@ -490,9 +487,14 @@ const MeetingsPage = () => {
                     value={formData.participants}
                     onChange={handleInputChange}
                     min="2"
-                    max="100"
+                    // Capped at the real room limit. It used to allow 100,
+                    // which let you schedule a meeting the app cannot host.
+                    max={MAX_PARTICIPANTS}
                     className="form-input"
                   />
+                  <p className="form-hint">
+                    Rooms hold up to {MAX_PARTICIPANTS} people.
+                  </p>
                 </div>
 
                 <div className="modal-footer">

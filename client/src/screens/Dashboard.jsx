@@ -1,16 +1,37 @@
-import React, { useState, useEffect } from "react";
-import { useNavigate } from "react-router-dom";
+import React, { useState, useEffect, useMemo } from "react";
+import { useNavigate, useLocation } from "react-router-dom";
 import MeetingsPage from "./Meetings";
-import AnalyticsPage from "./Analytics";
-import IntegrationsPage from "./Integrations";
-import TeamsPage from "./Teams";
-import NotificationsPage from "./Notifications";
 import SupportPage from "./Support";
 import SettingsContent from "./SettingsContent";
+import HistoryPage from "./History";
+import { useAuth } from "../context/AuthProvider";
+import { getHistory, getHistoryStats } from "../service/history";
+import { generateRoomCode } from "../service/roomCode";
 import "./Dashboard.css";
+
+function formatRelative(iso) {
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return "unknown";
+
+  const minutes = Math.round((Date.now() - date.getTime()) / 60000);
+  if (minutes < 1) return "just now";
+  if (minutes < 60) return `${minutes} min ago`;
+
+  const hours = Math.round(minutes / 60);
+  if (hours < 24) return `${hours} hr ago`;
+
+  const days = Math.round(hours / 24);
+  if (days === 1) return "yesterday";
+  if (days < 7) return `${days} days ago`;
+
+  return date.toLocaleDateString([], { day: "numeric", month: "short" });
+}
 
 const Dashboard = () => {
   const navigate = useNavigate();
+  const location = useLocation();
+  const { user, isSignedIn, signOut } = useAuth();
+
   const [activeTab, setActiveTab] = useState("overview");
   const [showStartMeetingModal, setShowStartMeetingModal] = useState(false);
   const [roomCode, setRoomCode] = useState("");
@@ -18,17 +39,17 @@ const Dashboard = () => {
   const [showUserMenu, setShowUserMenu] = useState(false);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
 
-  // Load theme preference
+  // Shown once to a guest returning from a call — see Room's handleLeave.
+  const [showSignupPrompt, setShowSignupPrompt] = useState(
+    () => Boolean(location.state?.promptSignup) && !isSignedIn
+  );
+
+  // Load theme preference. Falls back to the dark default, which is also the
+  // initial value of isDarkMode.
   useEffect(() => {
-    const savedTheme = localStorage.getItem("zenith_theme");
-    if (savedTheme) {
-      const isDark = savedTheme === "dark";
-      setIsDarkMode(isDark);
-      document.documentElement.setAttribute("data-theme", savedTheme);
-    } else {
-      // Ensure a default theme attribute is set
-      document.documentElement.setAttribute("data-theme", isDarkMode ? "dark" : "light");
-    }
+    const savedTheme = localStorage.getItem("zenith_theme") || "dark";
+    setIsDarkMode(savedTheme === "dark");
+    document.documentElement.setAttribute("data-theme", savedTheme);
   }, []);
 
   // Apply theme
@@ -83,51 +104,55 @@ const Dashboard = () => {
     setIsDarkMode(!isDarkMode);
   };
 
-  // Handle sign out
+  // Clear the one-shot signup prompt from history state, so a refresh or a
+  // back-navigation does not show it again.
+  useEffect(() => {
+    if (location.state?.promptSignup) {
+      navigate(location.pathname, { replace: true, state: null });
+    }
+  }, [location.pathname, location.state, navigate]);
+
   const handleSignOut = () => {
-    if (window.confirm("Are you sure you want to sign out?")) {
-      // Clear any stored data if needed
-      alert("Signed out successfully!");
-      window.location.href = "/";
-    }
+    signOut();
+    setShowUserMenu(false);
+    setActiveTab("overview");
   };
 
-  // Dummy data
-  const stats = {
-    totalMeetings: 24,
-    totalChange: "+12%",
-    activeParticipants: 156,
-    participantsChange: "+8%",
-    avgDuration: "42 min",
-    durationChange: "+5%"
+  /**
+   * Starting a meeting needs an account; joining someone else's invite link
+   * does not. Guests who click this are sent to sign in first.
+   */
+  const handleRequestStartMeeting = () => {
+    if (!isSignedIn) {
+      navigate("/login", { state: { from: "/" } });
+      return;
+    }
+    setRoomCode(generateRoomCode());
+    setShowStartMeetingModal(true);
   };
 
-  const activeSessions = [
-    {
-      id: 1,
-      title: "Product Alignment",
-      host: "Sarah Chen",
-      participants: ["Sarah Chen", "John Doe", "Mike Ross"],
-      tags: ["Q4 Roadmap", "Feature Priorities", "Resource Allocation"]
-    },
-    {
-      id: 2,
-      title: "Design Review",
-      host: "Alex Rivera",
-      participants: ["Alex Rivera", "Emma Stone"],
-      tags: ["UI Mockups", "User Flow", "Accessibility"]
-    }
-  ];
+  // Real figures, derived from meetings actually joined on this account.
+  // Recomputed on tab change so returning to Overview reflects a meeting that
+  // was joined since the dashboard mounted.
+  const stats = useMemo(
+    () => getHistoryStats(user?.email),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [user?.email, activeTab]
+  );
 
-  const teamPresence = [
-    { name: "Sarah Chen", role: "Product Manager", status: "in a meeting", avatar: "👩‍💼" },
-    { name: "Alex Rivera", role: "Design Lead", status: "available", avatar: "👨‍💻" },
-    { name: "Jordan Kim", role: "Engineer", status: "in a meeting", avatar: "👨‍🔧" }
-  ];
+  const recentMeetings = useMemo(
+    () => getHistory(user?.email).slice(0, 5),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [user?.email, activeTab]
+  );
 
-  const scheduleHighlights = [
-    { title: "Weekly Sync", time: "Today, 3:00 PM", duration: "45 min" }
-  ];
+  const displayName = user ? user.email.split("@")[0] : "";
+  const initials = displayName.slice(0, 2).toUpperCase() || "?";
+  const todayLabel = new Date().toLocaleDateString([], {
+    weekday: "long",
+    day: "numeric",
+    month: "long",
+  });
 
   const handleStartMeeting = () => {
     if (roomCode.trim()) {
@@ -138,133 +163,128 @@ const Dashboard = () => {
 
   const renderOverview = () => (
     <div className="overview-content">
-      {/* Stats Cards */}
-      <div className="stats-grid">
-        <div className="stat-card">
-          <div className="stat-icon">
-            <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
-            </svg>
-          </div>
-          <div className="stat-info">
-            <div className="stat-label">Total Meetings</div>
-            <div className="stat-value">{stats.totalMeetings}</div>
-            <div className="stat-change positive">{stats.totalChange}</div>
-          </div>
-        </div>
+      {/* Primary actions */}
+      <div className="quick-actions">
+        <button onClick={handleRequestStartMeeting} className="action-card primary">
+          <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
+          </svg>
+          <span className="action-card-title">Start a meeting</span>
+          <span className="action-card-sub">
+            {isSignedIn ? "Create a room and invite others" : "Sign in to create a room"}
+          </span>
+        </button>
 
-        <div className="stat-card">
-          <div className="stat-icon">
-            <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
-            </svg>
-          </div>
-          <div className="stat-info">
-            <div className="stat-label">Active Participants</div>
-            <div className="stat-value">{stats.activeParticipants}</div>
-            <div className="stat-change positive">{stats.participantsChange}</div>
-          </div>
-        </div>
-
-        <div className="stat-card">
-          <div className="stat-icon">
-            <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
-            </svg>
-          </div>
-          <div className="stat-info">
-            <div className="stat-label">Avg. Duration</div>
-            <div className="stat-value">{stats.avgDuration}</div>
-            <div className="stat-change positive">{stats.durationChange}</div>
-          </div>
-        </div>
+        <button
+          onClick={() => { setRoomCode(""); setShowStartMeetingModal(true); }}
+          className="action-card"
+        >
+          <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 16l-4-4m0 0l4-4m-4 4h14m-5 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
+          </svg>
+          <span className="action-card-title">Join with a code</span>
+          <span className="action-card-sub">Enter a code someone shared</span>
+        </button>
       </div>
 
-      <div className="content-grid">
-        {/* Active Sessions */}
-        <div className="content-section">
-          <div className="section-header">
-            <h2>Active Sessions</h2>
-            <p>Monitor ongoing conversations</p>
-          </div>
+      {/*
+        Figures below come from meetings actually joined on this account. They
+        are only shown when signed in, because there is nothing to count for a
+        guest and zeroes would read as a broken dashboard.
+      */}
+      {isSignedIn ? (
+        <>
+          <div className="stats-grid">
+            <div className="stat-card">
+              <div className="stat-icon">
+                <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                </svg>
+              </div>
+              <div className="stat-info">
+                <div className="stat-label">Meetings joined</div>
+                <div className="stat-value">{stats.totalMeetings}</div>
+              </div>
+            </div>
 
-          <div className="sessions-list">
-            {activeSessions.map(session => (
-              <div key={session.id} className="session-card">
-                <h3>{session.title}</h3>
-                <p className="session-host">Hosted by {session.host}</p>
-                <div className="session-participants">
-                  {session.participants.map((p, i) => (
-                    <span key={i} className="participant-badge">{p.split(' ')[0]}</span>
-                  ))}
-                </div>
-                <div className="session-tags">
-                  {session.tags.map((tag, i) => (
-                    <span key={i} className="tag">{tag}</span>
-                  ))}
-                </div>
-                <div className="session-actions">
-                  <button className="btn-join">Join Now</button>
-                  <button className="btn-share">Share Link</button>
+            <div className="stat-card">
+              <div className="stat-icon">
+                <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
+                </svg>
+              </div>
+              <div className="stat-info">
+                <div className="stat-label">Distinct rooms</div>
+                <div className="stat-value">{stats.uniqueRooms}</div>
+              </div>
+            </div>
+
+            <div className="stat-card">
+              <div className="stat-icon">
+                <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+              </div>
+              <div className="stat-info">
+                <div className="stat-label">Last meeting</div>
+                <div className="stat-value small">
+                  {stats.lastJoinedAt ? formatRelative(stats.lastJoinedAt) : "—"}
                 </div>
               </div>
-            ))}
+            </div>
           </div>
-        </div>
 
-        {/* Right Panel */}
-        <div className="right-panel">
-          {/* Team Presence */}
-          <div className="presence-section">
+          <div className="content-section">
             <div className="section-header">
-              <h3>Team Presence</h3>
-              <button className="btn-invite">Invite</button>
-            </div>
-            <p className="section-subtitle">See who is collaborating right now</p>
-
-            <div className="presence-list">
-              {teamPresence.map((member, i) => (
-                <div key={i} className="presence-item">
-                  <div className="member-avatar">{member.avatar}</div>
-                  <div className="member-info">
-                    <div className="member-name">{member.name}</div>
-                    <div className="member-role">{member.role}</div>
-                  </div>
-                  <div className={`status-badge ${member.status === 'available' ? 'available' : 'busy'}`}>
-                    {member.status === 'available' ? 'Available' : 'In a meeting'}
-                  </div>
-                </div>
-              ))}
+              <h2>Recent meetings</h2>
+              {recentMeetings.length > 0 && (
+                <button
+                  className="btn-text"
+                  onClick={() => setActiveTab("history")}
+                >
+                  View all
+                </button>
+              )}
             </div>
 
-            <div className="presence-actions">
-              <button className="btn-huddle">Start Huddle</button>
-              <button className="btn-chat">Open Chat</button>
-            </div>
+            {recentMeetings.length === 0 ? (
+              <p className="section-empty">
+                You haven't joined any meetings yet. Start one above, or open a
+                code someone shared with you.
+              </p>
+            ) : (
+              <ul className="recent-list">
+                {recentMeetings.map((entry) => (
+                  <li key={entry.id} className="recent-item">
+                    <span className="recent-room">{entry.roomId}</span>
+                    <span className="recent-time">
+                      {formatRelative(entry.joinedAt)}
+                    </span>
+                    <button
+                      className="btn-text"
+                      onClick={() => navigate(`/preview/${entry.roomId}`)}
+                    >
+                      Rejoin
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
           </div>
-
-          {/* Schedule */}
-          <div className="schedule-section">
-            <div className="section-header">
-              <h3>Schedule Highlights</h3>
-              <button className="btn-planner">Open Planner</button>
-            </div>
-            <p className="section-subtitle">Keep your next meetings on track</p>
-
-            <div className="schedule-list">
-              {scheduleHighlights.map((item, i) => (
-                <div key={i} className="schedule-item">
-                  <div className="schedule-icon">📅</div>
-                  <div className="schedule-info">
-                    <div className="schedule-title">{item.title}</div>
-                    <div className="schedule-time">{item.time}</div>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
+        </>
+      ) : (
+        <div className="signin-callout">
+          <h2>Sign in to keep your meeting history</h2>
+          <p>
+            You can join any meeting from a shared link without an account.
+            Creating your own room and keeping a record of the meetings you've
+            joined needs one.
+          </p>
+          <button onClick={() => navigate("/login")} className="btn-primary">
+            Sign in or create an account
+          </button>
         </div>
-      </div>
+      )}
     </div>
   );
 
@@ -329,71 +349,21 @@ const Dashboard = () => {
             Meetings
           </button>
 
-          <button
-            className={`nav-item ${activeTab === 'analytics' ? 'active' : ''}`}
-            onClick={() => {
-              setActiveTab('analytics');
-              setIsMobileMenuOpen(false);
-            }}
-          >
-            <svg className="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
-            </svg>
-            Analytics
-          </button>
-
-          <button
-            className={`nav-item ${activeTab === 'automation' ? 'active' : ''}`}
-            onClick={() => {
-              setActiveTab('automation');
-              setIsMobileMenuOpen(false);
-            }}
-          >
-            <svg className="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-            </svg>
-            Automation
-          </button>
-
-          <button
-            className={`nav-item ${activeTab === 'integrations' ? 'active' : ''}`}
-            onClick={() => {
-              setActiveTab('integrations');
-              setIsMobileMenuOpen(false);
-            }}
-          >
-            <svg className="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 14v6m-3-3h6M6 10h2a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v2a2 2 0 002 2zm10 0h2a2 2 0 002-2V6a2 2 0 00-2-2h-2a2 2 0 00-2 2v2a2 2 0 002 2zM6 20h2a2 2 0 002-2v-2a2 2 0 00-2-2H6a2 2 0 00-2 2v2a2 2 0 002 2z" />
-            </svg>
-            Integrations
-          </button>
-
-          <button
-            className={`nav-item ${activeTab === 'teams' ? 'active' : ''}`}
-            onClick={() => {
-              setActiveTab('teams');
-              setIsMobileMenuOpen(false);
-            }}
-          >
-            <svg className="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z" />
-            </svg>
-            Teams
-          </button>
-
-          <button
-            className={`nav-item ${activeTab === 'notifications' ? 'active' : ''}`}
-            onClick={() => {
-              setActiveTab('notifications');
-              setIsMobileMenuOpen(false);
-            }}
-          >
-            <svg className="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" />
-            </svg>
-            Notifications
-          </button>
+          {/* History needs an account, so it is hidden rather than shown empty. */}
+          {isSignedIn && (
+            <button
+              className={`nav-item ${activeTab === 'history' ? 'active' : ''}`}
+              onClick={() => {
+                setActiveTab('history');
+                setIsMobileMenuOpen(false);
+              }}
+            >
+              <svg className="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+              </svg>
+              History
+            </button>
+          )}
 
           <button
             className={`nav-item ${activeTab === 'support' ? 'active' : ''}`}
@@ -403,20 +373,20 @@ const Dashboard = () => {
             }}
           >
             <svg className="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M18.364 5.636l-3.536 3.536m0 5.656l3.536 3.536M9.172 9.172L5.636 5.636m3.536 9.192l-3.536 3.536M21 12a9 9 0 11-18 0 9 9 0 0118 0zm-5 0a4 4 0 11-8 0 4 4 0 018 0z" />
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8.228 9c.549-1.165 2.03-2 3.772-2 2.21 0 4 1.343 4 3 0 1.4-1.278 2.575-3.006 2.907-.542.104-.994.54-.994 1.093m0 3h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
             </svg>
-            Support
+            Help
           </button>
         </nav>
 
         <div className="sidebar-footer">
-          <div className="upgrade-card">
-            <p className="upgrade-title">Need more collaboration power?</p>
-            <button className="btn-upgrade">Upgrade Plan</button>
-          </div>
-          <button 
-            className="settings-btn" 
+          <button
+            className="settings-btn"
             onClick={() => {
+              if (!isSignedIn) {
+                navigate("/login", { state: { from: "/" } });
+                return;
+              }
               setActiveTab("settings");
               setIsMobileMenuOpen(false);
             }}
@@ -435,26 +405,15 @@ const Dashboard = () => {
         {/* Top Header */}
         <header className="top-header">
           <div className="header-left">
-            <div className="header-date">Thursday, November 13</div>
-            <h1 className="workspace-title">Product Team Workspace</h1>
+            <div className="header-date">{todayLabel}</div>
+            <h1 className="workspace-title">
+              {isSignedIn ? `Welcome back, ${displayName}` : "Zenith"}
+            </h1>
           </div>
 
           <div className="header-right">
-            <div className="search-container">
-              <svg className="search-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-              </svg>
-              <input type="text" placeholder="Search meetings, notes, files" className="search-input" />
-            </div>
-
-            <button className="btn-start-meeting" onClick={() => setShowStartMeetingModal(true)}>
+            <button className="btn-start-meeting" onClick={handleRequestStartMeeting}>
               Start Meeting
-            </button>
-
-            <button className="icon-btn">
-              <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-              </svg>
             </button>
 
             <button className="icon-btn" onClick={toggleTheme} title={isDarkMode ? "Light Mode" : "Dark Mode"}>
@@ -469,50 +428,49 @@ const Dashboard = () => {
               )}
             </button>
 
-            <button className="icon-btn notif-btn" onClick={() => setActiveTab('notifications')}>
-              <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" />
-              </svg>
-              <span className="notif-badge">3</span>
-            </button>
+            {isSignedIn ? (
+              <div className="user-menu-container">
+                <button className="user-btn" onClick={() => setShowUserMenu(!showUserMenu)}>
+                  <span className="user-avatar">{initials}</span>
+                  <span className="user-name">{displayName}</span>
+                  <svg className="dropdown-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                  </svg>
+                </button>
 
-            <div className="user-menu-container">
-              <button className="user-btn" onClick={() => setShowUserMenu(!showUserMenu)}>
-                <span className="user-avatar">KE</span>
-                <span className="user-name">keshavagarwal9335</span>
-                <svg className="dropdown-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-                </svg>
-              </button>
-
-              {showUserMenu && (
-                <div className="user-dropdown">
-                  <div className="user-dropdown-header">
-                    <div className="dropdown-avatar">KE</div>
-                    <div className="dropdown-user-info">
-                      <div className="dropdown-username">keshavagarwal9335</div>
-                      <div className="dropdown-email">keshavagarwal9335@gmail.com</div>
+                {showUserMenu && (
+                  <div className="user-dropdown">
+                    <div className="user-dropdown-header">
+                      <div className="dropdown-avatar">{initials}</div>
+                      <div className="dropdown-user-info">
+                        <div className="dropdown-username">{displayName}</div>
+                        <div className="dropdown-email">{user.email}</div>
+                      </div>
                     </div>
+                    <div className="dropdown-divider"></div>
+                    <button className="dropdown-item" onClick={() => {
+                      setShowUserMenu(false);
+                      navigate("/settings");
+                    }}>
+                      <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
+                      </svg>
+                      Profile &amp; Settings
+                    </button>
+                    <button className="dropdown-item danger" onClick={handleSignOut}>
+                      <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
+                      </svg>
+                      Sign Out
+                    </button>
                   </div>
-                  <div className="dropdown-divider"></div>
-                  <button className="dropdown-item" onClick={() => {
-                    setShowUserMenu(false);
-                    navigate("/settings");
-                  }}>
-                    <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
-                    </svg>
-                    Profile & Settings
-                  </button>
-                  <button className="dropdown-item danger" onClick={handleSignOut}>
-                    <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
-                    </svg>
-                    Sign Out
-                  </button>
-                </div>
-              )}
-            </div>
+                )}
+              </div>
+            ) : (
+              <button className="btn-signin" onClick={() => navigate("/login")}>
+                Sign in
+              </button>
+            )}
           </div>
         </header>
 
@@ -520,26 +478,49 @@ const Dashboard = () => {
         <div className="page-content">
           {activeTab === 'overview' && renderOverview()}
           {activeTab === 'meetings' && <MeetingsPage />}
-          {activeTab === 'analytics' && <AnalyticsPage />}
-          {activeTab === 'integrations' && <IntegrationsPage />}
-          {activeTab === 'teams' && <TeamsPage />}
-          {activeTab === 'notifications' && <NotificationsPage />}
+          {activeTab === 'history' && <HistoryPage />}
           {activeTab === 'support' && <SupportPage />}
           {activeTab === 'settings' && <SettingsContent />}
-          {activeTab !== 'overview' && activeTab !== 'meetings' && activeTab !== 'analytics' && activeTab !== 'integrations' && activeTab !== 'teams' && activeTab !== 'notifications' && activeTab !== 'support' && activeTab !== 'automation' && activeTab !== 'settings' && (
-            <div className="placeholder-content">
-              <h2>{activeTab.charAt(0).toUpperCase() + activeTab.slice(1)} Page</h2>
-              <p>Coming soon...</p>
-            </div>
-          )}
-          {activeTab === 'automation' && (
-            <div className="placeholder-content">
-              <h2>Automation</h2>
-              <p>Coming soon...</p>
-            </div>
-          )}
         </div>
       </main>
+
+      {/* Offered to a guest returning from a call, once. */}
+      {showSignupPrompt && (
+        <div className="modal-overlay" onClick={() => setShowSignupPrompt(false)}>
+          <div className="modal-content" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <h2>Thanks for joining</h2>
+              <button className="modal-close" onClick={() => setShowSignupPrompt(false)}>
+                <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+
+            <div className="modal-body">
+              <p className="modal-lead">
+                Create an account to start your own meetings and keep a record of
+                the ones you join.
+              </p>
+            </div>
+
+            <div className="modal-footer">
+              <button
+                className="btn-cancel"
+                onClick={() => setShowSignupPrompt(false)}
+              >
+                Not now
+              </button>
+              <button
+                className="btn-create"
+                onClick={() => navigate("/login")}
+              >
+                Create account
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Start Meeting Modal */}
       {showStartMeetingModal && (
@@ -567,7 +548,7 @@ const Dashboard = () => {
               </div>
 
               <div className="modal-options">
-                <button className="option-btn" onClick={() => setRoomCode(Math.random().toString(36).substr(2, 9))}>
+                <button className="option-btn" onClick={() => setRoomCode(generateRoomCode())}>
                   <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
                   </svg>
