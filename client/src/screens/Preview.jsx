@@ -3,7 +3,6 @@ import { useNavigate, useParams } from "react-router-dom";
 import { useMedia } from "../context/MediaProvider";
 import { useAuth } from "../context/AuthProvider";
 import { getDisplayName, setDisplayName } from "../service/identity";
-import { hasTurnConfigured } from "../service/iceServers";
 import "./Preview.css";
 
 /** Turns "ada.lovelace@example.com" into "Ada Lovelace" as a starting point. */
@@ -419,12 +418,6 @@ const PreviewPage = () => {
               Share the room code to invite others. Rooms hold up to 5 people.
             </p>
 
-            {!hasTurnConfigured() && (
-              <p className="preview-info-text preview-warning">
-                No TURN server is configured, so calls may fail between
-                restrictive networks.
-              </p>
-            )}
           </div>
         </div>
       </div>

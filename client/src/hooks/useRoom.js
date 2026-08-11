@@ -5,6 +5,7 @@ import { useMedia } from "../context/MediaProvider";
 import { useAuth } from "../context/AuthProvider";
 import { getParticipantId, getDisplayName } from "../service/identity";
 import { recordJoin } from "../service/history";
+import { setIceServers } from "../service/iceServers";
 
 const JOIN_ERRORS = {
   ROOM_FULL: "This room is full. Rooms hold up to 5 people.",
@@ -32,6 +33,7 @@ export function useRoom(roomId) {
   const [hostId, setHostId] = useState(null);
   const [joinState, setJoinState] = useState("joining");
   const [joinError, setJoinError] = useState(null);
+  const [hasTurn, setHasTurn] = useState(true);
   const [messages, setMessages] = useState([]);
   const [reactions, setReactions] = useState([]);
 
@@ -86,6 +88,11 @@ export function useRoom(roomId) {
           );
           return;
         }
+
+        // Applied before the roster is synced, so the peer connections created
+        // from it are built with the TURN credentials rather than STUN alone.
+        setIceServers(response.iceServers, response.hasTurn);
+        setHasTurn(Boolean(response.hasTurn));
 
         setJoinState("joined");
         setJoinError(null);
@@ -212,6 +219,7 @@ export function useRoom(roomId) {
     joinState,
     joinError,
     socketStatus,
+    hasTurn,
     messages,
     reactions,
     sendMessage,

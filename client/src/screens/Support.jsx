@@ -1,6 +1,5 @@
 import React, { useState } from "react";
 import { MAX_PARTICIPANTS } from "../service/MeshSession";
-import { hasTurnConfigured } from "../service/iceServers";
 import "./Support.css";
 
 /**
@@ -112,19 +111,6 @@ const SupportPage = () => {
         </div>
       </div>
 
-      {/*
-        Shown only when TURN is unconfigured, because in that state connection
-        failures are expected rather than mysterious, and the person hitting one
-        deserves to know it's a configuration gap and not their network.
-      */}
-      {!hasTurnConfigured() && (
-        <div className="support-notice">
-          <strong>No TURN server is configured.</strong> Calls will work between
-          people on ordinary home networks, but will fail to connect when both
-          participants are behind a restrictive network. See the project README
-          for how to set one up.
-        </div>
-      )}
 
       <div className="help-topics-section">
         <h2 className="section-title">Troubleshooting</h2>

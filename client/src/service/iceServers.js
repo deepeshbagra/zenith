@@ -1,62 +1,50 @@
 /**
  * ICE server configuration.
  *
- * STUN alone only works when at least one side can accept an inbound connection.
- * Behind symmetric NAT (most corporate networks, many mobile carriers) both sides
- * fail to find a route and the call silently hangs in "checking" forever. A TURN
- * server relays the media in that case, so it is required for the app to work for
- * real users rather than just two tabs on one laptop.
+ * The real list comes from the server in the room:join acknowledgement rather
+ * than from build-time REACT_APP_* variables, because anything with that prefix
+ * is compiled into the JavaScript bundle — a TURN password set that way is
+ * readable by anyone who opens devtools. See lib/ice.js.
  *
- * TURN credentials are injected at build time. Without them the app still runs,
- * but roughly 15-20% of real-world calls will fail to connect.
+ * The STUN-only list below is the fallback used before a join has completed.
  */
 
-const STUN_SERVERS = [
+const DEFAULT_ICE_SERVERS = [
   {
-    urls: [
-      "stun:stun.l.google.com:19302",
-      "stun:stun1.l.google.com:19302",
-    ],
+    urls: ["stun:stun.l.google.com:19302", "stun:stun1.l.google.com:19302"],
   },
 ];
 
+let current = DEFAULT_ICE_SERVERS;
+let turnConfigured = false;
+
 /**
- * Builds the iceServers array, appending TURN only when credentials are present.
- * @returns {RTCIceServer[]}
+ * Records the configuration the server sent with the join acknowledgement.
+ * @param {RTCIceServer[]} iceServers
+ * @param {boolean} hasTurn
  */
-export function getIceServers() {
-  const turnUrl = process.env.REACT_APP_TURN_URL;
-  const turnUsername = process.env.REACT_APP_TURN_USERNAME;
-  const turnCredential = process.env.REACT_APP_TURN_CREDENTIAL;
-
-  if (!turnUrl || !turnUsername || !turnCredential) {
-    if (process.env.NODE_ENV !== "test") {
-      console.warn(
-        "[ice] No TURN server configured. Calls between peers on restrictive " +
-          "networks (symmetric NAT) will fail to connect. Set REACT_APP_TURN_URL, " +
-          "REACT_APP_TURN_USERNAME and REACT_APP_TURN_CREDENTIAL."
-      );
-    }
-    return STUN_SERVERS;
+export function setIceServers(iceServers, hasTurn) {
+  if (Array.isArray(iceServers) && iceServers.length > 0) {
+    current = iceServers;
   }
+  turnConfigured = Boolean(hasTurn);
 
-  return [
-    ...STUN_SERVERS,
-    {
-      urls: turnUrl.split(",").map((u) => u.trim()),
-      username: turnUsername,
-      credential: turnCredential,
-    },
-  ];
+  if (!turnConfigured) {
+    console.warn(
+      "[ice] No TURN server is configured. Calls between peers on different " +
+        "restrictive networks (mobile data, corporate wifi) will fail to connect."
+    );
+  }
+}
+
+export function getIceServers() {
+  return current;
 }
 
 /**
- * True when TURN is configured. Used by the UI to warn during development.
+ * Whether the server reported a usable TURN configuration. Used by the UI to
+ * warn that some networks will not connect.
  */
 export function hasTurnConfigured() {
-  return Boolean(
-    process.env.REACT_APP_TURN_URL &&
-      process.env.REACT_APP_TURN_USERNAME &&
-      process.env.REACT_APP_TURN_CREDENTIAL
-  );
+  return turnConfigured;
 }
