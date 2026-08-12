@@ -58,7 +58,7 @@ client/src/
     MeshSession.js      Map of participantId -> PeerConnection.
                         Roster reconciliation, screen-share track swaps.
     identity.js         Stable per-tab participant id.
-    iceServers.js       STUN/TURN configuration.
+    iceServers.js       STUN configuration.
     auth.js             Local account store, PBKDF2-hashed passwords.
     history.js          Per-account record of meetings joined.
     roomCode.js         Readable room codes, no ambiguous characters.
@@ -90,7 +90,7 @@ lib/
   roomStore.js          Server-authoritative record of room join order.
 
 server/index.js         Standalone server, for local development.
-api/socket-io.js        The same handlers as a Vercel Function.
+api/socket-io/[...path].js  The same handlers as a Vercel Function.
 test/signaling.test.js  Integration tests against a real server.
 ```
 
@@ -195,14 +195,17 @@ works fine in testing with one instance. The Redis adapter gives every instance 
 shared view; `REDIS_URL` is therefore required in production and optional
 locally.
 
-### Why TURN matters
+### Same-network only, on purpose
 
-STUN only tells a peer its public address. When both participants are behind
-symmetric NAT — common on corporate networks and mobile carriers — neither can
-accept an inbound connection and the call hangs in "connecting" with no error.
-A TURN server relays the media in that case. Without one, expect roughly 15-20%
-of real-world calls to fail while working perfectly between two tabs on one
-machine.
+Calls connect directly between browsers, which works when everyone is on the
+same network — the same wifi, or the same office LAN.
+
+It does **not** work when two people are on genuinely different networks, such
+as one on mobile data. In that case both sides are behind NAT that will not
+accept an inbound connection, no direct route exists, and the tile sits on
+"Connecting" forever. Solving that needs a TURN server to relay the media, which
+means paying for someone else's bandwidth, so it is deliberately out of scope
+here. `service/iceServers.js` is where a TURN entry would go.
 
 ## Running locally
 
@@ -241,9 +244,6 @@ compiled into the client bundle and is therefore public.
 | `CLIENT_URL` | server | no | Allowed CORS origins, comma separated |
 | `PORT` | server | no | Standalone server port (default 8000) |
 | `REACT_APP_SOCKET_URL` | client | no | Override the signalling URL; unset means same-origin |
-| `REACT_APP_TURN_URL` | client | recommended | TURN server, for calls across restrictive networks |
-| `REACT_APP_TURN_USERNAME` | client | with TURN | TURN username |
-| `REACT_APP_TURN_CREDENTIAL` | client | with TURN | TURN credential |
 
 ## Deploying to Vercel
 
@@ -255,10 +255,7 @@ holding the WebSocket connections.
    Use the **TCP** connection URL, not the REST one — the Socket.IO adapter
    speaks the Redis protocol. Set it as `REDIS_URL`.
 
-2. **Set TURN credentials** as `REACT_APP_TURN_*`, or accept that calls will fail
-   for some users.
-
-3. **Deploy.**
+2. **Deploy.**
 
    ```bash
    vercel deploy --prod
@@ -292,6 +289,9 @@ capacity, reconnect identity, host election, input validation, and chat ordering
 **Known limits**
 
 - Five participants per room. Mesh upload bandwidth is the binding constraint.
+- **Everyone must be on the same network.** There is no TURN relay, so a call
+  between two different networks will not connect. See
+  [same-network only](#same-network-only-on-purpose).
 - Accounts are browser-local and unverified — see
   [on the auth, plainly](#on-the-auth-plainly). Rooms are open to anyone with
   the code regardless of who is signed in.
@@ -307,7 +307,9 @@ capacity, reconnect identity, host election, input validation, and chat ordering
 2. **An SFU** (mediasoup or LiveKit) to lift the participant cap. Each client
    would upload once and the server would fan out, changing bandwidth from
    linear to constant per client.
-3. **Private rooms**, once accounts mean something: restrict a room to invited
+3. **A TURN relay**, to lift the same-network restriction and let people call
+   across different networks.
+4. **Private rooms**, once accounts mean something: restrict a room to invited
    accounts rather than to whoever holds the code.
-4. **Simulcast + adaptive bitrate**, so a participant on a weak connection
+5. **Simulcast + adaptive bitrate**, so a participant on a weak connection
    degrades rather than freezing.

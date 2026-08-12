@@ -1,50 +1,24 @@
 /**
  * ICE server configuration.
  *
- * The real list comes from the server in the room:join acknowledgement rather
- * than from build-time REACT_APP_* variables, because anything with that prefix
- * is compiled into the JavaScript bundle — a TURN password set that way is
- * readable by anyone who opens devtools. See lib/ice.js.
+ * STUN only, which is what a same-network call needs. STUN tells each peer its
+ * own address so the two can find a direct route to each other; on one wifi
+ * network they usually connect on host candidates without even needing that.
  *
- * The STUN-only list below is the fallback used before a join has completed.
+ * There is deliberately no TURN server here. TURN relays media through a third
+ * party for the case where two peers are on different restrictive networks —
+ * typically one on mobile data — and neither can accept an inbound connection.
+ * That costs bandwidth someone has to pay for, and this project is scoped to
+ * calls between people on the same network. See the README for what that rules
+ * out.
  */
 
-const DEFAULT_ICE_SERVERS = [
+const ICE_SERVERS = [
   {
     urls: ["stun:stun.l.google.com:19302", "stun:stun1.l.google.com:19302"],
   },
 ];
 
-let current = DEFAULT_ICE_SERVERS;
-let turnConfigured = false;
-
-/**
- * Records the configuration the server sent with the join acknowledgement.
- * @param {RTCIceServer[]} iceServers
- * @param {boolean} hasTurn
- */
-export function setIceServers(iceServers, hasTurn) {
-  if (Array.isArray(iceServers) && iceServers.length > 0) {
-    current = iceServers;
-  }
-  turnConfigured = Boolean(hasTurn);
-
-  if (!turnConfigured) {
-    console.warn(
-      "[ice] No TURN server is configured. Calls between peers on different " +
-        "restrictive networks (mobile data, corporate wifi) will fail to connect."
-    );
-  }
-}
-
 export function getIceServers() {
-  return current;
-}
-
-/**
- * Whether the server reported a usable TURN configuration. Used by the UI to
- * warn that some networks will not connect.
- */
-export function hasTurnConfigured() {
-  return turnConfigured;
+  return ICE_SERVERS;
 }

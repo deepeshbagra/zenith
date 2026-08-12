@@ -34,7 +34,6 @@ const RoomPage = () => {
     joinState,
     joinError,
     socketStatus,
-    hasTurn,
     messages,
     reactions,
     sendMessage,
@@ -218,15 +217,6 @@ const RoomPage = () => {
             <span className="room-connection-warning">
               <span className="room-connection-dot" />
               Reconnecting to the room…
-            </span>
-          )}
-          {!hasTurn && (
-            <span
-              className="room-connection-warning"
-              title="Without a TURN server, peers on different restrictive networks cannot find a route to each other."
-            >
-              <span className="room-connection-dot" />
-              No TURN — some networks won't connect
             </span>
           )}
           <span className="room-clock">

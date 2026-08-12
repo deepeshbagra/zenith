@@ -21,7 +21,7 @@ const TROUBLESHOOTING = [
   {
     icon: "🔌",
     title: "The other person never connects",
-    body: "The call needs a network path between the two of you. On restrictive networks (many offices, some mobile carriers) that path only exists via a TURN server. If one isn't configured, the tile stays on \"Connecting\" indefinitely.",
+    body: "Zenith connects people on the same network. If you are on different networks — one of you on mobile data, say — there is no route between you and the tile stays on \"Connecting\". Get everyone onto the same wifi.",
   },
   {
     icon: "🔇",
